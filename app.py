@@ -12,11 +12,6 @@ from google.oauth2.service_account import Credentials
 # =========================
 # CONFIG
 # =========================
-# Inserisci nei Secrets:
-# google_sheet_id = "10AZY-ePyRssx6ajoF6_hsFChMK1dWVA-wkpDdz-DyM8"
-# fund_tab = "Fondamentali"
-# hist_tab = "Storico"
-# yf_suffix = ".MI"
 SHEET_ID  = st.secrets.get("google_sheet_id", "10AZY-ePyRssx6ajoF6_hsFChMK1dWVA-wkpDdz-DyM8")
 FUND_TAB  = st.secrets.get("fund_tab", "Fondamentali")
 HIST_TAB  = st.secrets.get("hist_tab", "Storico")
@@ -32,18 +27,15 @@ st.caption("EPS e BVPS letti dal foglio 'Fondamentali'. Prezzo live via Yahoo Fi
 @st.cache_resource
 def get_gsheet_client():
     scopes = ["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"]
-    # Preferisci secrets su Streamlit Cloud
     if "gcp_service_account" in st.secrets:
         creds_dict = st.secrets["gcp_service_account"]
     else:
-        # fallback locale: file service_account.json nella stessa cartella
         with open("service_account.json","r") as f:
             creds_dict = json.load(f)
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     return gspread.authorize(creds)
 
 gc = get_gsheet_client()
-# ✅ Apriamo direttamente per ID, niente ricerca per nome
 sh = gc.open_by_key(SHEET_ID)
 ws_fund = sh.worksheet(FUND_TAB)
 ws_hist = sh.worksheet(HIST_TAB)
@@ -51,6 +43,28 @@ ws_hist = sh.worksheet(HIST_TAB)
 # =========================
 # HELPERS
 # =========================
+def to_number(x):
+    """Converte stringhe con virgole/punti in float corretti"""
+    if x is None:
+        return None
+    if isinstance(x, (int, float)):
+        return float(x)
+    s = str(x).strip()
+    if s == "" or s.lower() in {"na","n/a","nan","null","none","-"}:
+        return None
+    s = s.replace(" ", "")
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "," in s:
+        s = s.replace(",", ".")
+    try:
+        return float(s)
+    except:
+        return None
+
 @st.cache_data(show_spinner=False)
 def load_fundamentals():
     df = pd.DataFrame(ws_fund.get_all_records())
@@ -58,13 +72,17 @@ def load_fundamentals():
         if col not in df.columns:
             df[col] = np.nan
     df["Ticker"] = df["Ticker"].astype(str).str.strip().str.upper()
+    df["EPS"]  = df["EPS"].apply(to_number)
+    df["BVPS"] = df["BVPS"].apply(to_number)
     return df
 
 def normalize_symbol(sym: str) -> str:
-    s = str(sym).strip()
+    s = str(sym).strip().upper()
     if not s:
         return ""
-    return s if "." in s else s + YF_SUFFIX
+    if "." in s:
+        return s
+    return s + YF_SUFFIX
 
 @st.cache_data(show_spinner=False)
 def fetch_price_yf(symbol: str):
@@ -86,12 +104,11 @@ def fetch_price_yf(symbol: str):
         return None
 
 def graham_number(eps, bvps):
-    try:
-        eps = float(eps); bvps = float(bvps)
-        if eps <= 0 or bvps <= 0: return None
-        return sqrt(22.5 * eps * bvps)
-    except:
+    if eps is None or bvps is None:
         return None
+    if eps <= 0 or bvps <= 0:
+        return None
+    return sqrt(22.5 * eps * bvps)
 
 def append_history_row(ts, ticker, price, eps, bvps, graham, fonte="App"):
     row = [ts, ticker, price if price is not None else "", eps, bvps, graham if graham is not None else "", fonte]
@@ -122,8 +139,8 @@ else:
 
     if tick:
         rec = df.loc[df["Ticker"] == tick].iloc[0].to_dict()
-        eps  = rec.get("EPS", None)
-        bvps = rec.get("BVPS", None)
+        eps_val  = rec.get("EPS", None)
+        bvps_val = rec.get("BVPS", None)
 
         # Stato EOD
         eod = last_eod_for_ticker(tick)
@@ -139,7 +156,7 @@ else:
 
         symbol = normalize_symbol(tick)
         price_live = fetch_price_yf(symbol)
-        gnum = graham_number(eps, bvps)
+        gnum = graham_number(eps_val, bvps_val)
 
         st.subheader(f"📌 {tick}")
         c1, c2 = st.columns(2)
@@ -152,11 +169,8 @@ else:
 
         # Formula esplicita
         st.markdown("### Dettaglio calcolo Graham")
-        if gnum is not None and eps is not None and bvps is not None:
-            try:
-                st.code(f"√(22.5 × {float(eps):.4f} × {float(bvps):.4f}) = {gnum:.4f}")
-            except Exception:
-                st.code("√(22.5 × EPS × BVPS)")
+        if gnum is not None and eps_val is not None and bvps_val is not None:
+            st.code(f"√(22.5 × {eps_val:.4f} × {bvps_val:.4f}) = {gnum:.4f}")
         else:
             st.write("Numero di Graham non calcolabile: controlla che EPS e BVPS siano > 0.")
 
@@ -168,5 +182,5 @@ else:
 
         if st.button("💾 Salva snapshot su 'Storico'"):
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            append_history_row(now_str, tick, price_live, eps, bvps, gnum, "App")
+            append_history_row(now_str, tick, price_live, eps_val, bvps_val, gnum, "App")
             st.success("Snapshot salvato su 'Storico'.")
