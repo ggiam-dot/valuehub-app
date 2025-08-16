@@ -10,14 +10,14 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # =========================
-# CONFIG
+# CONFIG (da Secrets)
 # =========================
-SHEET_ID  = st.secrets.get("google_sheet_id")
+SHEET_ID  = st.secrets.get("google_sheet_id")                  # obbligatorio
 FUND_TAB  = st.secrets.get("fund_tab", "Fondamentali")
 HIST_TAB  = st.secrets.get("hist_tab", "Storico")
 YF_SUFFIX = st.secrets.get("yf_suffix", ".MI")
 
-# override per lettera (MAIUSCOLE). Se mancano, uso alias/nome.
+# Lettere di colonna (MAIUSCOLE). Default: A=Ticker, B=EPS, C=BVPS, D=Graham
 TICKER_LETTER = st.secrets.get("ticker_col_letter", "A")
 EPS_LETTER    = st.secrets.get("eps_col_letter", "B")
 BVPS_LETTER   = st.secrets.get("bvps_col_letter", "C")
@@ -47,7 +47,7 @@ ws_fund = sh.worksheet(FUND_TAB)
 ws_hist = sh.worksheet(HIST_TAB)
 
 # =========================
-# UTILS
+# UTILITIES
 # =========================
 def _letter_to_index(letter: str) -> int:
     if not letter: return -1
@@ -59,19 +59,21 @@ def _letter_to_index(letter: str) -> int:
     return n-1  # zero-based
 
 def to_number(x):
+    """Parser robusto: IT/US, €, %, migliaia, virgole/punti."""
     if x is None: return None
     if isinstance(x, (int, float)): return float(x)
-    s = str(x).strip().replace("\u00A0","")
-    s = s.replace("\u2212","-").replace("€","").replace("EUR","").replace("’","'")
+    s = str(x).strip().replace("\u00A0","")    # NBSP
+    s = s.replace("\u2212","-")                # minus unicode
+    s = s.replace("€","").replace("EUR","").replace("’","'")
     has_pct = "%" in s
     s = s.replace("%","")
     s = re.sub(r"[^0-9\-,\.]", "", s)
     if s in {"", "-", ","}: return None
     if "," in s and "." in s:
         if s.rfind(",") > s.rfind("."):
-            s = s.replace(".","").replace(",",".")
+            s = s.replace(".","").replace(",",".")   # IT 1.234,56 -> 1234.56
         else:
-            s = s.replace(",","")
+            s = s.replace(",","")                    # US 1,234.56 -> 1234.56
     else:
         if "," in s:
             s = s.replace(",", ".")
@@ -124,50 +126,42 @@ def last_eod_for_ticker(ticker: str):
     return dft.iloc[-1].to_dict()
 
 # =========================
-# AGGIORNA
-# =========================
-col_btn, _ = st.columns([1,3])
-with col_btn:
-    if st.button("🔄 Aggiorna dal foglio"):
-        st.cache_data.clear()
-        st.experimental_rerun()
-
-# =========================
-# LOAD DATA PER LETTERA
+# LOAD DATA (per lettera)
 # =========================
 @st.cache_data(show_spinner=False)
 def load_fundamentals_by_letter():
-    # Leggi tutto il range occupato
     values = ws_fund.get_all_values()
     if not values or len(values) < 2:
         return pd.DataFrame(), {}
 
     header = values[0]
     data = values[1:]
-    df_full = pd.DataFrame(data, columns=header)
+    ncols = len(header)
 
-    # Prendi le colonne per lettera (0-based)
     idx_ticker = _letter_to_index(TICKER_LETTER)
     idx_eps    = _letter_to_index(EPS_LETTER)
     idx_bvps   = _letter_to_index(BVPS_LETTER)
     idx_gn     = _letter_to_index(GN_LETTER)
 
-    # Se gli indici superano le colonne presenti, fallback sicuro
-    ncols = len(header)
     for name, idx in [("Ticker",idx_ticker), ("EPS",idx_eps), ("BVPS",idx_bvps), ("GN",idx_gn)]:
         if idx < 0 or idx >= ncols:
             st.error(f"Lettera colonna {name} non valida o fuori range.")
             return pd.DataFrame(), {}
 
-    # Costruisci un dataframe minimale con solo le 4 colonne richieste
     df = pd.DataFrame({
-        "Ticker_raw": [row[idx_ticker] if idx_ticker < len(row) else "" for row in data],
-        "EPS_raw":    [row[idx_eps]    if idx_eps    < len(row) else "" for row in data],
-        "BVPS_raw":   [row[idx_bvps]   if idx_bvps   < len(row) else "" for row in data],
-        "GN_sheet_raw":[row[idx_gn]    if idx_gn     < len(row) else "" for row in data],
+        "Ticker_raw":  [row[idx_ticker] if idx_ticker < len(row) else "" for row in data],
+        "EPS_raw":     [row[idx_eps]    if idx_eps    < len(row) else "" for row in data],
+        "BVPS_raw":    [row[idx_bvps]   if idx_bvps   < len(row) else "" for row in data],
+        "GN_sheet_raw":[row[idx_gn]     if idx_gn     < len(row) else "" for row in data],
     })
 
-    # Normalizza
+    # togli righe completamente vuote
+    mask_nonempty = (df["Ticker_raw"].astype(str).str.strip()!="") | \
+                    (df["EPS_raw"].astype(str).str.strip()!="")   | \
+                    (df["BVPS_raw"].astype(str).str.strip()!="")
+    df = df[mask_nonempty].reset_index(drop=True)
+
+    # normalizza
     df["Ticker"]   = df["Ticker_raw"].astype(str).str.strip().str.upper()
     df["EPS"]      = df["EPS_raw"].apply(to_number)
     df["BVPS"]     = df["BVPS_raw"].apply(to_number)
@@ -183,11 +177,43 @@ def load_fundamentals_by_letter():
     return df, meta
 
 # =========================
+# BUTTON: refresh
+# =========================
+col_btn, _ = st.columns([1,3])
+with col_btn:
+    if st.button("🔄 Aggiorna dal foglio"):
+        st.cache_data.clear()
+        st.rerun()   # versione nuova (niente experimental)
+
+# =========================
+# FUNZIONI: riscrivere GN su Sheet
+# =========================
+def compute_gn_series(df):
+    """Series con GN = sqrt(22.5 * EPS * BVPS); '' se non calcolabile."""
+    out = []
+    for e, b in zip(df["EPS"], df["BVPS"]):
+        if e is None or b is None or e <= 0 or b <= 0:
+            out.append("")
+        else:
+            out.append((22.5 * e * b) ** 0.5)
+    return pd.Series(out)
+
+def write_gn_to_sheet(ws_fund, gn_series, gn_letter="D"):
+    """Scrive GN in colonna gn_letter, dalla riga 2 in giù (sovrascrive valori/ formule esistenti)."""
+    if gn_series is None or len(gn_series) == 0:
+        return
+    start_row = 2
+    end_row   = start_row + len(gn_series) - 1
+    cell_range = f'{gn_letter}{start_row}:{gn_letter}{end_row}'
+    out = [[("" if (v is None or v == "") else float(v))] for v in gn_series]
+    ws_fund.update(cell_range, out, value_input_option="USER_ENTERED")
+
+# =========================
 # UI
 # =========================
 df, meta = load_fundamentals_by_letter()
 if df.empty or df["Ticker"].isna().all():
-    st.warning("Nessun dato utile. Controlla che il foglio contenga Ticker (col A), EPS (B), BVPS (C), Graham (D).")
+    st.warning("Nessun dato utile. Controlla che il foglio contenga Ticker(A), EPS(B), BVPS(C), Graham(D).")
 else:
     tickers = df["Ticker"].replace("", np.nan).dropna().tolist()
     tick = st.selectbox("Scegli il Ticker", options=tickers)
@@ -196,8 +222,8 @@ else:
         row = df[df["Ticker"] == tick].iloc[0].to_dict()
         eps_val    = row.get("EPS")
         bvps_val   = row.get("BVPS")
-        gn_sheet   = row.get("GN_sheet")                 # GN letto dal foglio
-        gn_formula = gn_formula_225(eps_val, bvps_val)   # solo per mostrare la formula
+        gn_sheet   = row.get("GN_sheet")               # GN letto dal foglio
+        gn_formula = gn_formula_225(eps_val, bvps_val) # formula mostrata (controllo)
 
         # Prezzo live
         symbol = normalize_symbol(tick)
@@ -208,7 +234,7 @@ else:
         if price_live is not None and gn_sheet is not None and gn_sheet > 0:
             margin_pct = (1 - (price_live / gn_sheet)) * 100
 
-        # Stato EOD
+        # Snap EOD
         eod = last_eod_for_ticker(tick)
         if eod and eod.get("Timestamp"):
             ts = pd.to_datetime(eod["Timestamp"])
@@ -231,8 +257,8 @@ else:
             else:
                 st.metric("Margine di sicurezza", "n/d")
 
-        # Formula (informativa)
-        st.markdown("### Formula (mostrata; GN usato è quello dello Sheet)")
+        # Formula informativa (per confronto)
+        st.markdown("### Formula (mostrata; GN usato = valore dello Sheet)")
         if gn_formula is not None:
             st.code(f"√(22.5 × {eps_val:.4f} × {bvps_val:.4f}) = {gn_formula:.4f}")
         else:
@@ -250,6 +276,20 @@ else:
                     eps_val, bvps_val, gn_sheet, gn_formula
                 ]
             }))
+
+        st.markdown("---")
+        # Bottone: riscrivi GN corretto in colonna D
+        if st.button("✍️ Riscrivi Graham# su Sheet (22,5)"):
+            try:
+                gn_series = compute_gn_series(df)
+                write_gn_to_sheet(ws_fund, gn_series, gn_letter=GN_LETTER)
+                st.success("Colonna Graham# riscritta con i valori corretti (22,5×EPS×BVPS).")
+                st.cache_data.clear()
+                st.rerun()
+            except Exception as e:
+                st.error(f"Errore durante la riscrittura: {e}")
+
+        # Salva snapshot (usa GN da sheet)
         if st.button("💾 Salva snapshot su 'Storico'"):
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             append_history_row(now_str, tick, price_live, eps_val, bvps_val, gn_sheet, "App (GN da Sheet)")
