@@ -254,23 +254,19 @@ df, meta = load_fundamentals_by_letter()
 if df.empty or df["Ticker"].isna().all():
     st.warning("Nessun dato utile. Controlla che il foglio contenga Ticker(A), EPS(B), BVPS(C), Graham(D).")
 else:
-    # ---- Ricerca Ticker/Nome ----
-    st.text_input("🔎 Cerca (Ticker o Nome)…", key="search_query", placeholder="es. ENEL.MI o Enel")
-    q = (st.session_state.get("search_query") or "").strip().lower()
-
+    # ---- UNICA tendina: Scegli il Ticker (ricerca su "TICKER — Nome") ----
     def get_display_name(tick):
         name_sheet = df.loc[df["Ticker"] == tick, "Name"].fillna("").astype(str).str.strip()
         if not name_sheet.empty and name_sheet.iloc[0]:
             return name_sheet.iloc[0]
         return fetch_company_name_yf(normalize_symbol(tick)) or ""
 
-    tickers_all = df["Ticker"].replace("", np.nan).dropna().tolist()
-    if q:
-        tickers = [t for t in tickers_all if (q in t.lower()) or (q in get_display_name(t).lower())]
-    else:
-        tickers = tickers_all
+    tickers_all = sorted(df["Ticker"].replace("", np.nan).dropna().tolist(), key=lambda x: x)  # ordine alfabetico per ticker
+    labels = [f"{t} — {get_display_name(t)}" if get_display_name(t) else f"{t}" for t in tickers_all]
+    label_to_ticker = {lab: t for lab, t in zip(labels, tickers_all)}
 
-    tick = st.selectbox("Scegli il Ticker", options=tickers)
+    selected_label = st.selectbox("Scegli il Ticker", options=labels, index=0)
+    tick = label_to_ticker[selected_label]
 
     if tick:
         row = df[df["Ticker"] == tick].iloc[0].to_dict()
@@ -281,7 +277,27 @@ else:
 
         symbol = normalize_symbol(tick)
         company_name = get_display_name(tick)
-        st.markdown(f"### {tick} — {company_name}")
+
+        # HEADER con icone/link accanto al nome
+        st.markdown(
+            f"""
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <h3 style="margin:0">{tick} — {company_name}</h3>
+              <span style="display:inline-flex;gap:8px;align-items:center;">
+                <a href="https://finance.yahoo.com/quote/{tick}" target="_blank" rel="noopener" title="Yahoo Finance">
+                  <img src="https://www.google.com/s2/favicons?sz=32&domain=finance.yahoo.com" style="width:16px;height:16px;">
+                </a>
+                <a href="https://www.google.com/search?q=Investing+{tick}" target="_blank" rel="noopener" title="Investing">
+                  <img src="https://www.google.com/s2/favicons?sz=32&domain=it.investing.com" style="width:16px;height:16px;">
+                </a>
+                <a href="https://www.google.com/search?q=Morningstar+{tick}" target="_blank" rel="noopener" title="Morningstar">
+                  <img src="https://www.google.com/s2/favicons?sz=32&domain=morningstar.com" style="width:16px;height:16px;">
+                </a>
+              </span>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
         price_live = fetch_price_yf(symbol)
 
