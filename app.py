@@ -25,7 +25,7 @@ GN_LETTER     = st.secrets.get("gn_col_letter", "D")
 
 st.set_page_config(page_title="Value Hub – Graham Lookup", page_icon="📈", layout="centered")
 st.title("📈 Value Investment – Graham Lookup")
-st.caption("GN letto dallo Sheet (colonne per lettera). Prezzo live via Yahoo. Formula mostrata (22.5×EPS×BVPS).")
+# (caption rimossa)
 
 # =========================
 # GOOGLE AUTH
@@ -36,7 +36,6 @@ def get_gsheet_client():
     if "gcp_service_account" in st.secrets:
         creds_dict = st.secrets["gcp_service_account"]
     else:
-        # fallback locale, se stai sviluppando in locale con file json
         with open("service_account.json","r") as f:
             creds_dict = json.load(f)
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
@@ -57,14 +56,13 @@ def _letter_to_index(letter: str) -> int:
     for ch in s:
         if not ("A" <= ch <= "Z"): return -1
         n = n*26 + (ord(ch)-64)
-    return n-1  # zero-based
+    return n-1
 
 def to_number(x):
-    """Parser robusto: IT/US, €, %, migliaia, virgole/punti."""
     if x is None: return None
     if isinstance(x, (int, float)): return float(x)
-    s = str(x).strip().replace("\u00A0","")    # NBSP
-    s = s.replace("\u2212","-")                # minus unicode
+    s = str(x).strip().replace("\u00A0","")
+    s = s.replace("\u2212","-")
     s = s.replace("€","").replace("EUR","").replace("’","'")
     has_pct = "%" in s
     s = s.replace("%","")
@@ -72,9 +70,9 @@ def to_number(x):
     if s in {"", "-", ","}: return None
     if "," in s and "." in s:
         if s.rfind(",") > s.rfind("."):
-            s = s.replace(".","").replace(",",".")   # IT 1.234,56 -> 1234.56
+            s = s.replace(".","").replace(",",".")
         else:
-            s = s.replace(",","")                    # US 1,234.56 -> 1234.56
+            s = s.replace(",","")
     else:
         if "," in s:
             s = s.replace(",", ".")
@@ -107,6 +105,16 @@ def fetch_price_yf(symbol: str):
     except Exception:
         return None
 
+def fetch_company_name_yf(symbol: str) -> str:
+    """Ritorna il nome in chiaro della società da Yahoo Finance."""
+    try:
+        t = yf.Ticker(symbol)
+        info = t.info
+        name = info.get("shortName") or info.get("longName") or ""
+        return str(name)
+    except Exception:
+        return ""
+
 def gn_formula_225(eps, bvps):
     if eps is None or bvps is None or eps <= 0 or bvps <= 0: return None
     return sqrt(22.5 * eps * bvps)
@@ -127,7 +135,7 @@ def last_eod_for_ticker(ticker: str):
     return dft.iloc[-1].to_dict()
 
 # =========================
-# LOAD DATA (per lettera)
+# LOAD DATA
 # =========================
 @st.cache_data(show_spinner=False)
 def load_fundamentals_by_letter():
@@ -144,11 +152,6 @@ def load_fundamentals_by_letter():
     idx_bvps   = _letter_to_index(BVPS_LETTER)
     idx_gn     = _letter_to_index(GN_LETTER)
 
-    for name, idx in [("Ticker",idx_ticker), ("EPS",idx_eps), ("BVPS",idx_bvps), ("GN",idx_gn)]:
-        if idx < 0 or idx >= ncols:
-            st.error(f"Lettera colonna {name} non valida o fuori range.")
-            return pd.DataFrame(), {}
-
     df = pd.DataFrame({
         "Ticker_raw":  [row[idx_ticker] if idx_ticker < len(row) else "" for row in data],
         "EPS_raw":     [row[idx_eps]    if idx_eps    < len(row) else "" for row in data],
@@ -156,13 +159,11 @@ def load_fundamentals_by_letter():
         "GN_sheet_raw":[row[idx_gn]     if idx_gn     < len(row) else "" for row in data],
     })
 
-    # togli righe completamente vuote
     mask_nonempty = (df["Ticker_raw"].astype(str).str.strip()!="") | \
                     (df["EPS_raw"].astype(str).str.strip()!="")   | \
                     (df["BVPS_raw"].astype(str).str.strip()!="")
     df = df[mask_nonempty].reset_index(drop=True)
 
-    # normalizza
     df["Ticker"]   = df["Ticker_raw"].astype(str).str.strip().str.upper()
     df["EPS"]      = df["EPS_raw"].apply(to_number)
     df["BVPS"]     = df["BVPS_raw"].apply(to_number)
@@ -178,19 +179,18 @@ def load_fundamentals_by_letter():
     return df, meta
 
 # =========================
-# BUTTON: refresh
+# BUTTON refresh
 # =========================
 col_btn, _ = st.columns([1,3])
 with col_btn:
     if st.button("🔄 Aggiorna dal foglio"):
         st.cache_data.clear()
-        st.rerun()   # versione nuova (niente experimental)
+        st.rerun()
 
 # =========================
-# FUNZIONI: riscrivere GN su Sheet
+# FUNZIONI GN
 # =========================
 def compute_gn_series(df):
-    """Series con GN = sqrt(22.5 * EPS * BVPS); '' se non calcolabile."""
     out = []
     for e, b in zip(df["EPS"], df["BVPS"]):
         if e is None or b is None or e <= 0 or b <= 0:
@@ -200,7 +200,6 @@ def compute_gn_series(df):
     return pd.Series(out)
 
 def write_gn_to_sheet(ws_fund, gn_series, gn_letter="D"):
-    """Scrive GN in colonna gn_letter, dalla riga 2 in giù (sovrascrive valori/ formule esistenti)."""
     if gn_series is None or len(gn_series) == 0:
         return
     start_row = 2
@@ -223,19 +222,20 @@ else:
         row = df[df["Ticker"] == tick].iloc[0].to_dict()
         eps_val    = row.get("EPS")
         bvps_val   = row.get("BVPS")
-        gn_sheet   = row.get("GN_sheet")               # GN letto dal foglio
-        gn_formula = gn_formula_225(eps_val, bvps_val) # formula mostrata (controllo)
+        gn_sheet   = row.get("GN_sheet")
+        gn_formula = gn_formula_225(eps_val, bvps_val)
 
-        # Prezzo live
+        # Prezzo live + nome
         symbol = normalize_symbol(tick)
+        company_name = fetch_company_name_yf(symbol)
+        st.markdown(f"### {tick} — {company_name}")
+
         price_live = fetch_price_yf(symbol)
 
-        # Margine % vs GN_sheet
         margin_pct = None
         if price_live is not None and gn_sheet is not None and gn_sheet > 0:
             margin_pct = (1 - (price_live / gn_sheet)) * 100
 
-        # Snap EOD
         eod = last_eod_for_ticker(tick)
         if eod and eod.get("Timestamp"):
             ts = pd.to_datetime(eod["Timestamp"])
@@ -243,7 +243,6 @@ else:
         else:
             st.info("ℹ️ Nessuno snapshot EOD trovato per questo ticker.")
 
-        # Metriche
         c1, c2, c3 = st.columns(3)
         with c1:
             st.metric("Prezzo live", f"{price_live:.2f}" if price_live is not None else "n/d")
@@ -258,8 +257,8 @@ else:
             else:
                 st.metric("Margine di sicurezza", "n/d")
 
-        # Formula informativa (per confronto)
-        st.markdown("### Formula (mostrata; GN usato = valore dello Sheet)")
+        # Formula
+        st.markdown("### Formula")
         if gn_formula is not None:
             st.code(f"√(22.5 × {eps_val:.4f} × {bvps_val:.4f}) = {gn_formula:.4f}")
         else:
@@ -279,7 +278,6 @@ else:
             }))
 
         st.markdown("---")
-        # Bottone: riscrivi GN corretto in colonna D
         if st.button("✍️ Riscrivi Graham# su Sheet (22,5)"):
             try:
                 gn_series = compute_gn_series(df)
@@ -290,7 +288,6 @@ else:
             except Exception as e:
                 st.error(f"Errore durante la riscrittura: {e}")
 
-        # Salva snapshot (usa GN da sheet)
         if st.button("💾 Salva snapshot su 'Storico'"):
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             append_history_row(now_str, tick, price_live, eps_val, bvps_val, gn_sheet, "App (GN da Sheet)")
