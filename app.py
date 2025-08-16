@@ -17,16 +17,25 @@ FUND_TAB  = st.secrets.get("fund_tab", "Fondamentali")
 HIST_TAB  = st.secrets.get("hist_tab", "Storico")
 YF_SUFFIX = st.secrets.get("yf_suffix", ".MI")
 
-# Colonne base per LETTERA (MAIUSCOLE). Default: A=Ticker, B=EPS, C=BVPS, D=Graham
+# Versione amministratore: mostra il bottone per riscrivere GN
+IS_ADMIN  = True  # forza admin ON per questa versione
+
+# Lettere di colonna (MAIUSCOLE). Default: A=Ticker, B=EPS, C=BVPS, D=Graham
 TICKER_LETTER = st.secrets.get("ticker_col_letter", "A")
 EPS_LETTER    = st.secrets.get("eps_col_letter", "B")
 BVPS_LETTER   = st.secrets.get("bvps_col_letter", "C")
 GN_LETTER     = st.secrets.get("gn_col_letter", "D")
 
-# OPZIONALE: colonna Nome (se presente). Se assente, useremo Yahoo come fallback.
-NAME_LETTER   = st.secrets.get("name_col_letter", "")
+# OPZIONALE: colonna Nome (in chiaro) es. E
+NAME_LETTER   = st.secrets.get("name_col_letter", "")  
 
-st.set_page_config(page_title="Vigil-(Value_Investment_Graham_Intelligent_Lookup)", page_icon="📈", layout="centered")
+# OPZIONALE: colonne link (se presenti nello Sheet)
+# es.: yahoo_link_letter="F", investing_link_letter="G", morningstar_link_letter="H"
+YH_LINK_LETTER = st.secrets.get("yahoo_link_letter", "")
+INV_LINK_LETTER= st.secrets.get("investing_link_letter", "")
+MS_LINK_LETTER = st.secrets.get("morningstar_link_letter", "")
+
+st.set_page_config(page_title="Value Hub – Graham Lookup (Admin)", page_icon="📈", layout="centered")
 
 # --- stile minimal-elegante (mobile friendly) ---
 st.markdown("""
@@ -42,11 +51,11 @@ input[type="text"] { border-radius: 12px !important; }
 .badge { display:inline-flex; gap:6px; align-items:center; border:1px solid #eee; border-radius:999px; padding:6px 10px; text-decoration:none; color:#111; background:#fff; }
 .badge img { width:16px; height:16px; }
 .card { border:1px solid #eee; border-radius:16px; padding:12px 12px 4px 12px; margin-top:8px; }
-.switch-row { display:flex; align-items:center; gap:8px; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("Vigil-(Value_Investment_Graham_Intelligent_Lookup)")
+st.title("📈 Value Investment – Graham Lookup (Admin)")
+st.markdown("###### Value Investment Research Hub · Graham Number (22.5) · FTSEMIB")
 
 # =========================
 # GOOGLE AUTH
@@ -95,7 +104,8 @@ def to_number(x):
         else:
             s = s.replace(",","")                    # US 1,234.56 -> 1234.56
     else:
-        if "," in s: s = s.replace(",", ".")
+        if "," in s:
+            s = s.replace(",", ".")
         elif s.count(".") > 1:
             parts = s.split("."); s = "".join(parts[:-1]) + "." + parts[-1]
     try:
@@ -121,7 +131,7 @@ def fetch_price_and_name_yf(symbol: str):
         if price is None:
             h = t.history(period="5d")
             if not h.empty: price = float(h["Close"].dropna().iloc[-1])
-        # nome leggibile (fallback se NAME non c'è nello sheet)
+        # Provo a recuperare un nome leggibile (fallback se NAME non c'è nello sheet)
         name = None
         try:
             info = t.info
@@ -157,11 +167,6 @@ def make_badge(name: str, url: str, domain: str) -> str:
     favicon = f"https://www.google.com/s2/favicons?sz=64&domain={domain}"
     return f"<a class='badge' href='{url}' target='_blank' rel='noopener'><img src='{favicon}'/> {name}</a>"
 
-# link autogenerati (nessuna modifica allo sheet necessaria)
-def link_yahoo(t):      return f"https://finance.yahoo.com/quote/{t}" if t else ""
-def link_investing(t):  return f"https://www.google.com/search?q=Investing+{t}" if t else ""
-def link_morning(t):    return f"https://www.google.com/search?q=Morningstar+{t}" if t else ""
-
 # =========================
 # LOAD DATA (per lettera)
 # =========================
@@ -180,12 +185,16 @@ def load_fundamentals_by_letter():
     idx_bvps   = _letter_to_index(BVPS_LETTER)
     idx_gn     = _letter_to_index(GN_LETTER)
     idx_name   = _letter_to_index(NAME_LETTER) if NAME_LETTER else -1
+    idx_yh     = _letter_to_index(YH_LINK_LETTER) if YH_LINK_LETTER else -1
+    idx_inv    = _letter_to_index(INV_LINK_LETTER) if INV_LINK_LETTER else -1
+    idx_ms     = _letter_to_index(MS_LINK_LETTER) if MS_LINK_LETTER else -1
 
     for name, idx in [("Ticker",idx_ticker), ("EPS",idx_eps), ("BVPS",idx_bvps), ("GN",idx_gn)]:
         if idx < 0 or idx >= ncols:
             st.error(f"Lettera colonna {name} non valida o fuori range.")
             return pd.DataFrame(), {}
 
+    # leggi colonne base
     df = pd.DataFrame({
         "Ticker_raw":  [row[idx_ticker] if idx_ticker < len(row) else "" for row in data],
         "EPS_raw":     [row[idx_eps]    if idx_eps    < len(row) else "" for row in data],
@@ -193,11 +202,26 @@ def load_fundamentals_by_letter():
         "GN_sheet_raw":[row[idx_gn]     if idx_gn     < len(row) else "" for row in data],
     })
 
-    # opzionale Nome
+    # opzionali
     if 0 <= idx_name < ncols:
         df["Name_raw"] = [row[idx_name] if idx_name < len(row) else "" for row in data]
     else:
         df["Name_raw"] = ""
+
+    if 0 <= idx_yh < ncols:
+        df["Yahoo_raw"] = [row[idx_yh] if idx_yh < len(row) else "" for row in data]
+    else:
+        df["Yahoo_raw"] = ""
+
+    if 0 <= idx_inv < ncols:
+        df["Investing_raw"] = [row[idx_inv] if idx_inv < len(row) else "" for row in data]
+    else:
+        df["Investing_raw"] = ""
+
+    if 0 <= idx_ms < ncols:
+        df["Morningstar_raw"] = [row[idx_ms] if idx_ms < len(row) else "" for row in data]
+    else:
+        df["Morningstar_raw"] = ""
 
     # togli righe completamente vuote
     mask_nonempty = (df["Ticker_raw"].astype(str).str.strip()!="") | \
@@ -212,27 +236,37 @@ def load_fundamentals_by_letter():
     df["BVPS"]     = df["BVPS_raw"].apply(to_number)
     df["GN_sheet"] = df["GN_sheet_raw"].apply(to_number)
 
+    # link (se mancanti, costruisci fallback)
+    def _fallback_yahoo(t):
+        return f"https://finance.yahoo.com/quote/{t}" if t else ""
+    def _fallback_search(site, t):
+        if not t: return ""
+        q = f"{site}+{t}"
+        return f"https://www.google.com/search?q={q}"
+
+    df["Yahoo"]      = df["Yahoo_raw"].replace("", np.nan)
+    df["Investing"]  = df["Investing_raw"].replace("", np.nan)
+    df["Morningstar"]= df["Morningstar_raw"].replace("", np.nan)
+
+    df["Yahoo"]       = df.apply(lambda r: r["Yahoo"] if pd.notna(r["Yahoo"]) else _fallback_yahoo(r["Ticker"]), axis=1)
+    df["Investing"]   = df.apply(lambda r: r["Investing"] if pd.notna(r["Investing"]) else _fallback_search("Investing", r["Ticker"]), axis=1)
+    df["Morningstar"] = df.apply(lambda r: r["Morningstar"] if pd.notna(r["Morningstar"]) else _fallback_search("Morningstar", r["Ticker"]), axis=1)
+
     meta = {
         "ticker_letter": TICKER_LETTER,
         "eps_letter": EPS_LETTER,
         "bvps_letter": BVPS_LETTER,
         "gn_letter": GN_LETTER,
         "name_letter": NAME_LETTER,
+        "yh_link_letter": YH_LINK_LETTER,
+        "inv_link_letter": INV_LINK_LETTER,
+        "ms_link_letter": MS_LINK_LETTER,
         "header_row": header
     }
     return df, meta
 
 # =========================
-# TOGGLE modalità
-# =========================
-# Usa st.toggle se disponibile, altrimenti fallback checkbox
-try:
-    is_public = st.toggle("🌍 Modalità pubblica", value=False, help="Disattiva funzioni di amministrazione e messaggi tecnici.")
-except Exception:
-    is_public = st.checkbox("🌍 Modalità pubblica", value=False)
-
-# =========================
-# BUTTON: refresh (unico)
+# BUTTON: refresh (pubblico)
 # =========================
 col_btn, _ = st.columns([1,3])
 with col_btn:
@@ -241,7 +275,7 @@ with col_btn:
         st.rerun()
 
 # =========================
-# FUNZIONI admin: riscrivere GN su Sheet
+# FUNZIONI: riscrivere GN su Sheet (admin)
 # =========================
 def compute_gn_series(df):
     out = []
@@ -262,20 +296,20 @@ def write_gn_to_sheet(ws_fund, gn_series, gn_letter="D"):
     ws_fund.update(cell_range, out, value_input_option="USER_ENTERED")
 
 # =========================
-# UI + Ricerca (Ticker o Nome)
+# UI + RICERCA (ticker o nome)
 # =========================
 df, meta = load_fundamentals_by_letter()
 if df.empty or df["Ticker"].isna().all():
     st.warning("Nessun dato utile. Controlla che il foglio contenga Ticker(A), EPS(B), BVPS(C), Graham(D).")
 else:
-    # Barra di ricerca
+    # Barra di ricerca: filtra per ticker o nome (case-insensitive)
     q = st.text_input("🔎 Cerca (Ticker o Nome)…", placeholder="es. ENEL.MI o Enel")
     dff = df.copy()
     if q and str(q).strip():
         qn = str(q).strip().lower()
         dff = dff[(dff["Ticker"].str.lower().str.contains(qn)) | (dff["Name"].str.lower().str.contains(qn))]
 
-    # Etichette "TICKER — Nome"
+    # Etichetta elegante per select: "TICKER — Nome"
     def _mk_label(row):
         name = row["Name"].strip()
         return f"{row['Ticker']} — {name}" if name else f"{row['Ticker']}"
@@ -310,12 +344,12 @@ else:
     if price_live is not None and gn_sheet is not None and gn_sheet > 0:
         margin_pct = (1 - (price_live / gn_sheet)) * 100
 
-    # Header con nome + badges link (autogenerati)
+    # Header con nome + badges link
     st.markdown(f"### {nice_name}  \n`{tick}`")
     badge_html = "<div class='badge-row'>"
-    badge_html += make_badge("Yahoo Finance", link_yahoo(tick), "finance.yahoo.com")
-    badge_html += make_badge("Investing",     link_investing(tick), "it.investing.com")
-    badge_html += make_badge("Morningstar",   link_morning(tick), "morningstar.com")
+    badge_html += make_badge("Yahoo Finance", row.get("Yahoo",""), "finance.yahoo.com")
+    badge_html += make_badge("Investing",     row.get("Investing",""), "it.investing.com")
+    badge_html += make_badge("Morningstar",   row.get("Morningstar",""), "morningstar.com")
     badge_html += "</div>"
     st.markdown(badge_html, unsafe_allow_html=True)
 
@@ -336,35 +370,41 @@ else:
             st.metric("Margine di sicurezza", "n/d")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Snapshot EOD (solo PRIVATA)
-    if not is_public:
-        eod = last_eod_for_ticker(tick)
-        if eod and eod.get("Timestamp"):
-            ts = pd.to_datetime(eod["Timestamp"])
-            st.success(f"✅ Ultimo snapshot: {ts.strftime('%Y-%m-%d %H:%M:%S')}")
+    # Snapshot EOD
+    eod = last_eod_for_ticker(tick)
+    if eod and eod.get("Timestamp"):
+        ts = pd.to_datetime(eod["Timestamp"])
+        st.success(f"✅ Ultimo snapshot: {ts.strftime('%Y-%m-%d %H:%M:%S')}")
+    else:
+        st.info("ℹ️ Nessuno snapshot EOD trovato per questo ticker.")
 
-    # The GN Formula
-    st.markdown("### The GN Formula")
+    # Formula informativa (per confronto)
+    st.markdown("### Formula (mostrata; GN usato = valore dello Sheet)")
     if gn_formula is not None:
         st.code(f"√(22.5 × {eps_val:.4f} × {bvps_val:.4f}) = {gn_formula:.4f}")
     else:
         st.write("Formula non calcolabile (servono EPS e BVPS > 0).")
 
-    # Debug & bottoni admin (solo PRIVATA)
-    if not is_public:
-        with st.expander("🔎 Debug colonne & valori"):
-            st.write(pd.DataFrame({
-                "Campo": ["Ticker_letter","EPS_letter","BVPS_letter","GN_letter","Name_letter",
-                          "Ticker_raw","Name_raw","EPS_raw","BVPS_raw","GN_sheet_raw",
-                          "EPS_parsed","BVPS_parsed","GN_sheet_parsed","GN_formula_22_5","Nome_finale"],
-                "Valore": [
-                    meta.get("ticker_letter"), meta.get("eps_letter"), meta.get("bvps_letter"), meta.get("gn_letter"), meta.get("name_letter"),
-                    row.get("Ticker_raw"), row.get("Name_raw"), row.get("EPS_raw"), row.get("BVPS_raw"), row.get("GN_sheet_raw"),
-                    eps_val, bvps_val, gn_sheet, gn_formula, nice_name
-                ]
-            }))
+    # Debug (facoltativo)
+    with st.expander("🔎 Debug colonne & valori"):
+        st.write(pd.DataFrame({
+            "Campo": ["Ticker_letter","EPS_letter","BVPS_letter","GN_letter","Name_letter",
+                      "Ticker_raw","Name_raw","EPS_raw","BVPS_raw","GN_sheet_raw",
+                      "Yahoo_raw","Investing_raw","Morningstar_raw",
+                      "Yahoo_link","Investing_link","Morningstar_link",
+                      "EPS_parsed","BVPS_parsed","GN_sheet_parsed","GN_formula_22_5","Nome_finale"],
+            "Valore": [
+                meta.get("ticker_letter"), meta.get("eps_letter"), meta.get("bvps_letter"), meta.get("gn_letter"), meta.get("name_letter"),
+                row.get("Ticker_raw"), row.get("Name_raw"), row.get("EPS_raw"), row.get("BVPS_raw"), row.get("GN_sheet_raw"),
+                row.get("Yahoo_raw"), row.get("Investing_raw"), row.get("Morningstar_raw"),
+                row.get("Yahoo"), row.get("Investing"), row.get("Morningstar"),
+                eps_val, bvps_val, gn_sheet, gn_formula, nice_name
+            ]
+        }))
 
-        st.markdown("---")
+    st.markdown("---")
+    # Bottone admin: riscrivi GN corretto in colonna D
+    if IS_ADMIN:
         if st.button("✍️ Riscrivi Graham# su Sheet (22,5)"):
             try:
                 gn_series = compute_gn_series(df)
@@ -375,7 +415,8 @@ else:
             except Exception as e:
                 st.error(f"Errore durante la riscrittura: {e}")
 
-        if st.button("💾 Salva snapshot su 'Storico'"):
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            append_history_row(now_str, tick, price_live, eps_val, bvps_val, gn_sheet, "App (GN da Sheet)")
-            st.success("Snapshot salvato su 'Storico'.")
+    # Salva snapshot (usa GN da sheet)
+    if st.button("💾 Salva snapshot su 'Storico'"):
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        append_history_row(now_str, tick, price_live, eps_val, bvps_val, gn_sheet, "App (GN da Sheet)")
+        st.success("Snapshot salvato su 'Storico'.")
