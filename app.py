@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -11,33 +10,41 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # =========================
-# CONFIGURAZIONE BASE
+# CONFIG
 # =========================
-SHEET_NAME = st.secrets.get("google_sheet_name", "ValueHub – FTSE MIB")
-FUND_TAB   = st.secrets.get("fund_tab", "Fondamentali")
-HIST_TAB   = st.secrets.get("hist_tab", "Storico")
-YF_SUFFIX  = st.secrets.get("yf_suffix", ".MI")  # suffisso Yahoo per Borsa Italiana
+# Inserisci nei Secrets:
+# google_sheet_id = "10AZY-ePyRssx6ajoF6_hsFChMK1dWVA-wkpDdz-DyM8"
+# fund_tab = "Fondamentali"
+# hist_tab = "Storico"
+# yf_suffix = ".MI"
+SHEET_ID  = st.secrets.get("google_sheet_id", "10AZY-ePyRssx6ajoF6_hsFChMK1dWVA-wkpDdz-DyM8")
+FUND_TAB  = st.secrets.get("fund_tab", "Fondamentali")
+HIST_TAB  = st.secrets.get("hist_tab", "Storico")
+YF_SUFFIX = st.secrets.get("yf_suffix", ".MI")
 
 st.set_page_config(page_title="Value Hub – Graham Lookup", page_icon="📈", layout="centered")
 st.title("📈 Value Investment – Graham Lookup")
-st.caption("EPS e BVPS vengono letti dal foglio 'Fondamentali'. Prezzo live via Yahoo Finance. Snapshot EOD scritto su 'Storico'.")
+st.caption("EPS e BVPS letti dal foglio 'Fondamentali'. Prezzo live via Yahoo Finance. Snapshot EOD su 'Storico'.")
 
 # =========================
-# AUTENTICAZIONE GOOGLE
+# GOOGLE AUTH
 # =========================
 @st.cache_resource
 def get_gsheet_client():
     scopes = ["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"]
+    # Preferisci secrets su Streamlit Cloud
     if "gcp_service_account" in st.secrets:
         creds_dict = st.secrets["gcp_service_account"]
     else:
+        # fallback locale: file service_account.json nella stessa cartella
         with open("service_account.json","r") as f:
             creds_dict = json.load(f)
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     return gspread.authorize(creds)
 
 gc = get_gsheet_client()
-sh = gc.open(SHEET_NAME)
+# ✅ Apriamo direttamente per ID, niente ricerca per nome
+sh = gc.open_by_key(SHEET_ID)
 ws_fund = sh.worksheet(FUND_TAB)
 ws_hist = sh.worksheet(HIST_TAB)
 
@@ -97,7 +104,7 @@ def last_eod_for_ticker(ticker: str):
     if dfh.empty or "Ticker" not in dfh.columns or "Timestamp" not in dfh.columns:
         return None
     dft = dfh[dfh["Ticker"].astype(str).str.upper() == ticker.upper()].copy()
-    if dft.empty: 
+    if dft.empty:
         return None
     dft["Timestamp"] = pd.to_datetime(dft["Timestamp"], errors="coerce")
     dft = dft.sort_values("Timestamp")
