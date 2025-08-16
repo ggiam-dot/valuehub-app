@@ -13,6 +13,7 @@ from google.oauth2.service_account import Credentials
 # =========================
 # CONFIG
 # =========================
+# Usa l'ID del tuo Sheet (quello dell'URL)
 SHEET_ID  = st.secrets.get("google_sheet_id", "10AZY-ePyRssx6ajoF6_hsFChMK1dWVA-wkpDdz-DyM8")
 FUND_TAB  = st.secrets.get("fund_tab", "Fondamentali")
 HIST_TAB  = st.secrets.get("hist_tab", "Storico")
@@ -42,64 +43,53 @@ ws_fund = sh.worksheet(FUND_TAB)
 ws_hist = sh.worksheet(HIST_TAB)
 
 # =========================
+# AGGIORNO I DATI A RICHIESTA
+# =========================
+# Bottone per forzare l'aggiornamento immediato dal foglio
+col_btn, _ = st.columns([1,3])
+with col_btn:
+    if st.button("🔄 Aggiorna dal foglio"):
+        st.cache_data.clear()      # svuota la cache dei dati
+        st.experimental_rerun()    # ricarica l'app
+
+# =========================
 # NUMBER PARSER ROBUSTO
 # =========================
 def to_number(x):
     """
     Converte input da Google Sheets in float, gestendo:
     - formato IT/US: "0,26", "1.234,56", "1,234.56"
-    - simboli: %, €, spazi, NBSP, caratteri non numerici
-    - segno meno unicode
+    - simboli: %, €, spazi, NBSP, segno meno unicode
     - se presente %, divide per 100
     """
     if x is None:
         return None
     if isinstance(x, (int, float)):
         return float(x)
-
     s = str(x)
-    raw = s  # mantieni per debug
-
-    # normalizza spazi e segni
     s = s.strip().replace("\u00A0", "")            # NBSP
     s = s.replace("\u2212", "-")                   # minus unicode
     s = s.replace("€", "").replace("EUR", "")
     s = s.replace("’", "'")                        # apostrofo tipografico
-
-    # estrai presenza percentuale
     has_pct = "%" in s
     s = s.replace("%", "")
-
-    # rimuovi tutto ciò che non è cifra, punto, virgola, segno meno
-    s = re.sub(r"[^0-9\-,\.]", "", s)
-
-    # se stringa vuota dopo pulizia
+    s = re.sub(r"[^0-9\-,\.]", "", s)              # lascia cifre, - , . ,
     if s == "" or s == "-" or s == ",": 
         return None
-
-    # logica separatori:
-    # - se entrambi presenti, prendi come decimale l'ULTIMO fra ',' e '.'
-    #   e l'altro diventa migliaia (rimosso)
     if "," in s and "." in s:
         last_comma = s.rfind(",")
         last_dot   = s.rfind(".")
         if last_comma > last_dot:
-            # formato IT: migliaia con '.', decimale con ','
-            s = s.replace(".", "")
-            s = s.replace(",", ".")
+            s = s.replace(".", "").replace(",", ".")  # IT
         else:
-            # formato US: migliaia con ',', decimale con '.'
-            s = s.replace(",", "")
+            s = s.replace(",", "")                    # US
     else:
-        # solo virgola -> decimale
         if "," in s:
             s = s.replace(",", ".")
         else:
-            # solo punti: se ci sono >1 punti, probabilmente migliaia -> rimuovi tutti tranne l'ultimo
             if s.count(".") > 1:
                 parts = s.split(".")
                 s = "".join(parts[:-1]) + "." + parts[-1]
-
     try:
         val = float(s)
         if has_pct:
@@ -113,18 +103,16 @@ def to_number(x):
 # =========================
 @st.cache_data(show_spinner=False)
 def load_fundamentals():
-    # NON convertiamo qui: ci serve anche il "grezzo" per il pannello di debug
     rows = ws_fund.get_all_records()
     df = pd.DataFrame(rows)
     for col in ["Ticker","EPS","BVPS"]:
         if col not in df.columns:
             df[col] = np.nan
-    # colonne grezze
+    # raw per debug
     df["Ticker_raw"] = df["Ticker"]
     df["EPS_raw"]    = df["EPS"]
     df["BVPS_raw"]   = df["BVPS"]
-
-    # normalizza
+    # normalizzati
     df["Ticker"] = df["Ticker"].astype(str).str.strip().str.upper()
     df["EPS"]  = df["EPS"].apply(to_number)
     df["BVPS"] = df["BVPS"].apply(to_number)
@@ -134,9 +122,7 @@ def normalize_symbol(sym: str) -> str:
     s = str(sym).strip().upper()
     if not s:
         return ""
-    if "." in s:
-        return s
-    return s + YF_SUFFIX
+    return s if "." in s else s + YF_SUFFIX
 
 @st.cache_data(show_spinner=False)
 def fetch_price_yf(symbol: str):
@@ -232,7 +218,7 @@ else:
             ok = price_live <= threshold
             st.markdown(f"**Margine di sicurezza (67%)**: {'✅ SÌ' if ok else '❌ NO'} — soglia {threshold:.2f}")
 
-        # Debug expander per vedere i valori grezzi e convertiti
+        # Debug expander per vedere grezzi vs convertiti
         with st.expander("🔎 Debug input dal foglio"):
             st.write(pd.DataFrame({
                 "Campo": ["Ticker","EPS_raw","BVPS_raw","EPS_parsed","BVPS_parsed"],
