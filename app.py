@@ -5,6 +5,7 @@ import yfinance as yf
 from math import sqrt
 from datetime import datetime, date
 import json
+import re
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -41,36 +42,89 @@ ws_fund = sh.worksheet(FUND_TAB)
 ws_hist = sh.worksheet(HIST_TAB)
 
 # =========================
-# HELPERS
+# NUMBER PARSER ROBUSTO
 # =========================
 def to_number(x):
-    """Converte stringhe con virgole/punti in float corretti"""
+    """
+    Converte input da Google Sheets in float, gestendo:
+    - formato IT/US: "0,26", "1.234,56", "1,234.56"
+    - simboli: %, €, spazi, NBSP, caratteri non numerici
+    - segno meno unicode
+    - se presente %, divide per 100
+    """
     if x is None:
         return None
     if isinstance(x, (int, float)):
         return float(x)
-    s = str(x).strip()
-    if s == "" or s.lower() in {"na","n/a","nan","null","none","-"}:
+
+    s = str(x)
+    raw = s  # mantieni per debug
+
+    # normalizza spazi e segni
+    s = s.strip().replace("\u00A0", "")            # NBSP
+    s = s.replace("\u2212", "-")                   # minus unicode
+    s = s.replace("€", "").replace("EUR", "")
+    s = s.replace("’", "'")                        # apostrofo tipografico
+
+    # estrai presenza percentuale
+    has_pct = "%" in s
+    s = s.replace("%", "")
+
+    # rimuovi tutto ciò che non è cifra, punto, virgola, segno meno
+    s = re.sub(r"[^0-9\-,\.]", "", s)
+
+    # se stringa vuota dopo pulizia
+    if s == "" or s == "-" or s == ",": 
         return None
-    s = s.replace(" ", "")
+
+    # logica separatori:
+    # - se entrambi presenti, prendi come decimale l'ULTIMO fra ',' e '.'
+    #   e l'altro diventa migliaia (rimosso)
     if "," in s and "." in s:
-        if s.rfind(",") > s.rfind("."):
-            s = s.replace(".", "").replace(",", ".")
+        last_comma = s.rfind(",")
+        last_dot   = s.rfind(".")
+        if last_comma > last_dot:
+            # formato IT: migliaia con '.', decimale con ','
+            s = s.replace(".", "")
+            s = s.replace(",", ".")
         else:
+            # formato US: migliaia con ',', decimale con '.'
             s = s.replace(",", "")
-    elif "," in s:
-        s = s.replace(",", ".")
+    else:
+        # solo virgola -> decimale
+        if "," in s:
+            s = s.replace(",", ".")
+        else:
+            # solo punti: se ci sono >1 punti, probabilmente migliaia -> rimuovi tutti tranne l'ultimo
+            if s.count(".") > 1:
+                parts = s.split(".")
+                s = "".join(parts[:-1]) + "." + parts[-1]
+
     try:
-        return float(s)
+        val = float(s)
+        if has_pct:
+            val = val / 100.0
+        return val
     except:
         return None
 
+# =========================
+# HELPERS
+# =========================
 @st.cache_data(show_spinner=False)
 def load_fundamentals():
-    df = pd.DataFrame(ws_fund.get_all_records())
+    # NON convertiamo qui: ci serve anche il "grezzo" per il pannello di debug
+    rows = ws_fund.get_all_records()
+    df = pd.DataFrame(rows)
     for col in ["Ticker","EPS","BVPS"]:
         if col not in df.columns:
             df[col] = np.nan
+    # colonne grezze
+    df["Ticker_raw"] = df["Ticker"]
+    df["EPS_raw"]    = df["EPS"]
+    df["BVPS_raw"]   = df["BVPS"]
+
+    # normalizza
     df["Ticker"] = df["Ticker"].astype(str).str.strip().str.upper()
     df["EPS"]  = df["EPS"].apply(to_number)
     df["BVPS"] = df["BVPS"].apply(to_number)
@@ -104,10 +158,8 @@ def fetch_price_yf(symbol: str):
         return None
 
 def graham_number(eps, bvps):
-    if eps is None or bvps is None:
-        return None
-    if eps <= 0 or bvps <= 0:
-        return None
+    if eps is None or bvps is None: return None
+    if eps <= 0 or bvps <= 0: return None
     return sqrt(22.5 * eps * bvps)
 
 def append_history_row(ts, ticker, price, eps, bvps, graham, fonte="App"):
@@ -138,9 +190,9 @@ else:
     tick = st.selectbox("Scegli il Ticker", options=tickers)
 
     if tick:
-        rec = df.loc[df["Ticker"] == tick].iloc[0].to_dict()
-        eps_val  = rec.get("EPS", None)
-        bvps_val = rec.get("BVPS", None)
+        row = df.loc[df["Ticker"] == tick].iloc[0].to_dict()
+        eps_val  = row.get("EPS", None)
+        bvps_val = row.get("BVPS", None)
 
         # Stato EOD
         eod = last_eod_for_ticker(tick)
@@ -179,6 +231,19 @@ else:
             threshold = 0.67 * gnum
             ok = price_live <= threshold
             st.markdown(f"**Margine di sicurezza (67%)**: {'✅ SÌ' if ok else '❌ NO'} — soglia {threshold:.2f}")
+
+        # Debug expander per vedere i valori grezzi e convertiti
+        with st.expander("🔎 Debug input dal foglio"):
+            st.write(pd.DataFrame({
+                "Campo": ["Ticker","EPS_raw","BVPS_raw","EPS_parsed","BVPS_parsed"],
+                "Valore": [
+                    row.get("Ticker_raw"),
+                    row.get("EPS_raw"),
+                    row.get("BVPS_raw"),
+                    eps_val,
+                    bvps_val
+                ]
+            }))
 
         if st.button("💾 Salva snapshot su 'Storico'"):
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
