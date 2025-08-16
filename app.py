@@ -3,8 +3,7 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 from math import sqrt
-from datetime import datetime, date, time as dtime
-from zoneinfo import ZoneInfo
+from datetime import datetime
 import json, re
 
 import gspread
@@ -23,6 +22,7 @@ TICKER_LETTER = st.secrets.get("ticker_col_letter", "A")
 EPS_LETTER    = st.secrets.get("eps_col_letter", "B")
 BVPS_LETTER   = st.secrets.get("bvps_col_letter", "C")
 GN_LETTER     = st.secrets.get("gn_col_letter", "D")
+
 # OPZIONALE: colonna Nome (se presente). Se assente, useremo Yahoo come fallback.
 NAME_LETTER   = st.secrets.get("name_col_letter", "")
 
@@ -42,7 +42,7 @@ input[type="text"] { border-radius: 12px !important; }
 .badge { display:inline-flex; gap:6px; align-items:center; border:1px solid #eee; border-radius:999px; padding:6px 10px; text-decoration:none; color:#111; background:#fff; }
 .badge img { width:16px; height:16px; }
 .card { border:1px solid #eee; border-radius:16px; padding:12px 12px 4px 12px; margin-top:8px; }
-.statusbar { border:1px dashed #e5e7eb; border-radius:12px; padding:8px 12px; margin:8px 0 4px 0; display:flex; justify-content:space-between; align-items:center; font-size:0.92rem; color:#374151; }
+.switch-row { display:flex; align-items:center; gap:8px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -141,32 +141,15 @@ def append_history_row(ts, ticker, price, eps, bvps, graham, fonte="App"):
     ws_hist.append_row(row, value_input_option="USER_ENTERED")
 
 @st.cache_data(show_spinner=False)
-def load_history():
+def last_eod_for_ticker(ticker: str):
     recs = ws_hist.get_all_records()
     dfh = pd.DataFrame(recs)
-    if dfh.empty: 
-        return dfh
-    # normalizza timestamp
-    if "Timestamp" in dfh.columns:
-        dfh["Timestamp"] = pd.to_datetime(dfh["Timestamp"], errors="coerce")
-    return dfh
-
-def last_eod_for_ticker(ticker: str):
-    dfh = load_history()
     if dfh.empty or "Ticker" not in dfh.columns or "Timestamp" not in dfh.columns: return None
     dft = dfh[dfh["Ticker"].astype(str).str.upper() == ticker.upper()].copy()
     if dft.empty: return None
+    dft["Timestamp"] = pd.to_datetime(dft["Timestamp"], errors="coerce")
     dft = dft.sort_values("Timestamp")
     return dft.iloc[-1].to_dict()
-
-def has_eod_today(ticker: str, today_date: date):
-    dfh = load_history()
-    if dfh.empty or "Ticker" not in dfh.columns or "Timestamp" not in dfh.columns:
-        return False
-    dft = dfh[dfh["Ticker"].astype(str).str.upper() == ticker.upper()].copy()
-    if dft.empty: return False
-    dft["day"] = pd.to_datetime(dft["Timestamp"], errors="coerce").dt.date
-    return any(dft["day"] == today_date)
 
 def make_badge(name: str, url: str, domain: str) -> str:
     """Piccola pill con favicon + nome link"""
@@ -240,14 +223,13 @@ def load_fundamentals_by_letter():
     return df, meta
 
 # =========================
-# SIDEBAR: toggle modalità
+# TOGGLE modalità
 # =========================
-with st.sidebar:
-    try:
-        is_public = st.toggle("🌍 Modalità pubblica", value=False, help="Disattiva funzioni admin e messaggi tecnici.")
-    except Exception:
-        is_public = st.checkbox("🌍 Modalità pubblica", value=False)
-    st.caption("In pubblica: auto-refresh 60s, nessun Debug o messaggi tecnici.")
+# Usa st.toggle se disponibile, altrimenti fallback checkbox
+try:
+    is_public = st.toggle("🌍 Modalità pubblica", value=False, help="Disattiva funzioni di amministrazione e messaggi tecnici.")
+except Exception:
+    is_public = st.checkbox("🌍 Modalità pubblica", value=False)
 
 # =========================
 # BUTTON: refresh (unico)
@@ -257,21 +239,6 @@ with col_btn:
     if st.button("🔄 Aggiorna pagina"):
         st.cache_data.clear()
         st.rerun()
-
-# Auto-refresh discreto (solo Pubblica)
-if is_public:
-    st.markdown("<meta http-equiv='refresh' content='60'>", unsafe_allow_html=True)
-
-# =========================
-# STATUS BAR (ora locale)
-# =========================
-now_rome = datetime.now(ZoneInfo("Europe/Rome"))
-st.markdown(
-    f"<div class='statusbar'>"
-    f"<div>🕒 Ultimo refresh: {now_rome.strftime('%Y-%m-%d %H:%M:%S %Z')}</div>"
-    f"<div>Modalità: {'Pubblica' if is_public else 'Privata'} • Auto-refresh: {'60s' if is_public else 'off'}</div>"
-    f"</div>", unsafe_allow_html=True
-)
 
 # =========================
 # FUNZIONI admin: riscrivere GN su Sheet
@@ -345,14 +312,12 @@ else:
 
     # Header con nome + badges link (autogenerati)
     st.markdown(f"### {nice_name}  \n`{tick}`")
-    def badge_row(t):
-        b = "<div class='badge-row'>"
-        b += make_badge("Yahoo Finance", f"https://finance.yahoo.com/quote/{t}", "finance.yahoo.com")
-        b += make_badge("Investing",     f"https://www.google.com/search?q=Investing+{t}", "it.investing.com")
-        b += make_badge("Morningstar",   f"https://www.google.com/search?q=Morningstar+{t}", "morningstar.com")
-        b += "</div>"
-        return b
-    st.markdown(badge_row(tick), unsafe_allow_html=True)
+    badge_html = "<div class='badge-row'>"
+    badge_html += make_badge("Yahoo Finance", link_yahoo(tick), "finance.yahoo.com")
+    badge_html += make_badge("Investing",     link_investing(tick), "it.investing.com")
+    badge_html += make_badge("Morningstar",   link_morning(tick), "morningstar.com")
+    badge_html += "</div>"
+    st.markdown(badge_html, unsafe_allow_html=True)
 
     # Card metriche
     st.markdown("<div class='card'>", unsafe_allow_html=True)
@@ -371,103 +336,46 @@ else:
             st.metric("Margine di sicurezza", "n/d")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # === Snapshot EOD automatico per il TICKER selezionato ===
-    # Esegui tra le 17:30 e le 17:50 Europe/Rome, se non già presente per oggi
-    close_time = dtime(hour=17, minute=30)
-    if is_public and (now_rome.time() >= close_time):
-        if not has_eod_today(tick, now_rome.date()):
+    # Snapshot EOD (solo PRIVATA)
+    if not is_public:
+        eod = last_eod_for_ticker(tick)
+        if eod and eod.get("Timestamp"):
+            ts = pd.to_datetime(eod["Timestamp"])
+            st.success(f"✅ Ultimo snapshot: {ts.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    # The GN Formula
+    st.markdown("### The GN Formula")
+    if gn_formula is not None:
+        st.code(f"√(22.5 × {eps_val:.4f} × {bvps_val:.4f}) = {gn_formula:.4f}")
+    else:
+        st.write("Formula non calcolabile (servono EPS e BVPS > 0).")
+
+    # Debug & bottoni admin (solo PRIVATA)
+    if not is_public:
+        with st.expander("🔎 Debug colonne & valori"):
+            st.write(pd.DataFrame({
+                "Campo": ["Ticker_letter","EPS_letter","BVPS_letter","GN_letter","Name_letter",
+                          "Ticker_raw","Name_raw","EPS_raw","BVPS_raw","GN_sheet_raw",
+                          "EPS_parsed","BVPS_parsed","GN_sheet_parsed","GN_formula_22_5","Nome_finale"],
+                "Valore": [
+                    meta.get("ticker_letter"), meta.get("eps_letter"), meta.get("bvps_letter"), meta.get("gn_letter"), meta.get("name_letter"),
+                    row.get("Ticker_raw"), row.get("Name_raw"), row.get("EPS_raw"), row.get("BVPS_raw"), row.get("GN_sheet_raw"),
+                    eps_val, bvps_val, gn_sheet, gn_formula, nice_name
+                ]
+            }))
+
+        st.markdown("---")
+        if st.button("✍️ Riscrivi Graham# su Sheet (22,5)"):
             try:
-                append_history_row(now_rome.strftime("%Y-%m-%d %H:%M:%S"), tick, price_live, eps_val, bvps_val, gn_sheet, "Auto EOD")
-                st.success("📌 Snapshot EOD creato automaticamente per il titolo selezionato.")
+                gn_series = compute_gn_series(df)
+                write_gn_to_sheet(ws_fund, gn_series, gn_letter=GN_LETTER)
+                st.success("Colonna Graham# riscritta con i valori corretti (22,5×EPS×BVPS).")
                 st.cache_data.clear()
+                st.rerun()
             except Exception as e:
-                # in pubblica evitiamo messaggi tecnici
-                pass
+                st.error(f"Errore durante la riscrittura: {e}")
 
-    # === Tabs: Dettaglio / Storico ===
-    tab1, tab2 = st.tabs(["Dettaglio", "Storico"])
-    with tab1:
-        # The GN Formula
-        st.markdown("### The GN Formula")
-        if gn_formula is not None:
-            st.code(f"√(22.5 × {eps_val:.4f} × {bvps_val:.4f}) = {gn_formula:.4f}")
-        else:
-            st.write("Formula non calcolabile (servono EPS e BVPS > 0).")
-
-        # area admin (solo Privata)
-        if not is_public:
-            st.markdown("---")
-            colA, colB = st.columns(2)
-            with colA:
-                if st.button("✍️ Riscrivi Graham# su Sheet (22,5)"):
-                    try:
-                        gn_series = compute_gn_series(df)
-                        write_gn_to_sheet(ws_fund, gn_series, gn_letter=GN_LETTER)
-                        st.success("Colonna Graham# riscritta con i valori corretti (22,5×EPS×BVPS).")
-                        st.cache_data.clear()
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Errore durante la riscrittura: {e}")
-            with colB:
-                if st.button("📦 Esegui snapshot EOD per TUTTI i titoli adesso"):
-                    try:
-                        for _, r in df.iterrows():
-                            _tick = r["Ticker"]
-                            _eps  = r["EPS"]
-                            _bvps = r["BVPS"]
-                            _gn   = r["GN_sheet"]
-                            if not _tick: 
-                                continue
-                            price, _ = fetch_price_and_name_yf(normalize_symbol(_tick))
-                            append_history_row(now_rome.strftime("%Y-%m-%d %H:%M:%S"), _tick, price, _eps, _bvps, _gn, "Admin EOD All")
-                        st.success("Snapshot EOD creato per tutti i titoli.")
-                        st.cache_data.clear()
-                    except Exception as e:
-                        st.error(f"Errore snapshot massivo: {e}")
-
-        # Debug (solo Privata)
-        if not is_public:
-            with st.expander("🔎 Debug colonne & valori"):
-                st.write(pd.DataFrame({
-                    "Campo": ["Ticker_letter","EPS_letter","BVPS_letter","GN_letter","Name_letter",
-                              "Ticker_raw","Name_raw","EPS_raw","BVPS_raw","GN_sheet_raw",
-                              "EPS_parsed","BVPS_parsed","GN_sheet_parsed","GN_formula_22_5","Nome_finale"],
-                    "Valore": [
-                        meta.get("ticker_letter"), meta.get("eps_letter"), meta.get("bvps_letter"), meta.get("gn_letter"), meta.get("name_letter"),
-                        row.get("Ticker_raw"), row.get("Name_raw"), row.get("EPS_raw"), row.get("BVPS_raw"), row.get("GN_sheet_raw"),
-                        eps_val, bvps_val, gn_sheet, gn_formula, nice_name
-                    ]
-                }))
-
-    with tab2:
-        # STORICO: tabella + filtri + download + grafico
-        dfh = load_history()
-        if dfh.empty or "Ticker" not in dfh.columns:
-            st.info("Nessuno storico disponibile.")
-        else:
-            dft = dfh[dfh["Ticker"].astype(str).str.upper() == tick.upper()].copy()
-            if dft.empty:
-                st.info("Nessuno storico disponibile per questo titolo.")
-            else:
-                # filtri data
-                min_day = pd.to_datetime(dft["Timestamp"]).dt.date.min()
-                max_day = pd.to_datetime(dft["Timestamp"]).dt.date.max()
-                start, end = st.date_input("Intervallo date", value=(min_day, max_day), min_value=min_day, max_value=max_day)
-                if isinstance(start, date) and isinstance(end, date) and start <= end:
-                    dft = dft[(pd.to_datetime(dft["Timestamp"]).dt.date >= start) &
-                              (pd.to_datetime(dft["Timestamp"]).dt.date <= end)]
-                dft = dft.sort_values("Timestamp")
-
-                # mostra tabella
-                show_cols = [c for c in ["Timestamp","Ticker","Price","EPS","BVPS","Graham","Fonte"] if c in dft.columns]
-                st.dataframe(dft[show_cols], use_container_width=True, hide_index=True)
-
-                # download CSV
-                csv = dft[show_cols].to_csv(index=False).encode("utf-8")
-                st.download_button("⬇️ Scarica CSV", data=csv, file_name=f"storico_{tick}.csv", mime="text/csv")
-
-                # grafico semplice (Prezzo e GN se presenti)
-                if "Price" in dft.columns and "Graham" in dft.columns:
-                    plot_df = dft[["Timestamp","Price","Graham"]].dropna()
-                    plot_df = plot_df.set_index("Timestamp")
-                    st.line_chart(plot_df, use_container_width=True)
+        if st.button("💾 Salva snapshot su 'Storico'"):
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            append_history_row(now_str, tick, price_live, eps_val, bvps_val, gn_sheet, "App (GN da Sheet)")
+            st.success("Snapshot salvato su 'Storico'.")
