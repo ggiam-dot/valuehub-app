@@ -23,8 +23,11 @@ TICKER_LETTER = st.secrets.get("ticker_col_letter", "A")
 EPS_LETTER    = st.secrets.get("eps_col_letter", "B")
 BVPS_LETTER   = st.secrets.get("bvps_col_letter", "C")
 GN_LETTER     = st.secrets.get("gn_col_letter", "D")
-# Opzionale: colonna Nome (se non presente, useremo Yahoo)
-NAME_LETTER   = st.secrets.get("name_col_letter", "")
+# Opzionali
+NAME_LETTER      = st.secrets.get("name_col_letter", "")         # es. "E"
+INV_URL_LETTER   = st.secrets.get("investing_col_letter", "")    # es. "F"
+MORN_URL_LETTER  = st.secrets.get("morning_col_letter", "")      # es. "G"
+ISIN_LETTER      = st.secrets.get("isin_col_letter", "")         # es. "H"
 
 st.set_page_config(page_title="Vigil – Value Investment Graham Lookup",
                    page_icon="📈", layout="centered")
@@ -33,29 +36,24 @@ st.set_page_config(page_title="Vigil – Value Investment Graham Lookup",
 # THEME TOGGLE (Light/Dark) + Mobile tweaks
 # =========================
 def inject_theme_css(dark: bool):
-    # Palette tema
     if dark:
         bg = "#0e1117"; paper="#161a23"; text="#e6e6e6"; sub="#bdbdbd"
         accent="#4da3ff"; border="#2a2f3a"; good="#9ad17b"; bad="#ff6b6b"; gold="#DAA520"
         metric_val = "#f2f2f2"; metric_lab = "#cfcfcf"
-        # Formula in verde chiaro (dark)
-        formula_bg    = "#10351e"   # sfondo verde scuro elegante
-        formula_border= "#2f8f5b"   # bordo verde
-        formula_text  = "#e6ffef"   # testo verde chiarissimo
+        # Formula verde chiaro (dark)
+        formula_bg    = "#10351e"; formula_border= "#2f8f5b"; formula_text  = "#e6ffef"
     else:
         bg = "#ffffff"; paper="#fafafa"; text="#222"; sub="#666"
         accent="#0b74ff"; border="#e5e7eb"; good="#0a7f2e"; bad="#b00020"; gold="#DAA520"
         metric_val = "#111"; metric_lab = "#444"
-        # Formula in verde chiaro (light)
-        formula_bg    = "#e9f8ef"   # sfondo verde chiarissimo
-        formula_border= "#b8e6c9"   # bordo verde tenue
-        formula_text  = "#0d5b2a"   # testo verde profondo
+        # Formula verde chiaro (light)
+        formula_bg    = "#e9f8ef"; formula_border= "#b8e6c9"; formula_text  = "#0d5b2a"
 
     st.markdown(
         f"""
         <style>
         :root {{
-          --bg: {bg}; --paper: {paper}; --text: {text}; --sub: {sub};
+          --bg:{bg}; --paper:{paper}; --text:{text}; --sub:{sub};
           --accent:{accent}; --border:{border}; --good:{good}; --bad:{bad}; --gold:{gold};
           --metric-val:{metric_val}; --metric-lab:{metric_lab};
           --formula-bg:{formula_bg}; --formula-border:{formula_border}; --formula-text:{formula_text};
@@ -64,18 +62,15 @@ def inject_theme_css(dark: bool):
         h1, h2, h3, h4, h5, h6 {{ color: var(--text) !important; }}
         a, a * {{ color: var(--accent) !important; }}
 
-        /* Cards e chip */
         .v-card {{ background: var(--paper); border:1px solid var(--border);
-           border-radius:14px; padding:14px 16px; }}
+                   border-radius:14px; padding:14px 16px; }}
         .v-chip-gold {{ color: var(--gold); font-weight:800; }}
         .v-sub {{ color: var(--sub); font-size:12px; }}
 
-        /* Metriche: forza colori label/valore in dark e light */
         [data-testid="stMetric"] > div > div:nth-child(1) {{ color: var(--metric-lab) !important; }}
         [data-testid="stMetricValue"] {{ color: var(--metric-val) !important; }}
         [data-testid="stMetricDelta"] {{ color: var(--metric-val) !important; }}
 
-        /* Box formula evidenziato (verde chiaro) */
         .v-formula-title {{ font-size: 1.15rem; font-weight: 800; margin: 6px 0 8px; }}
         .v-formula-box {{
           background: var(--formula-bg);
@@ -88,17 +83,14 @@ def inject_theme_css(dark: bool):
           font-size: 16px; font-weight: 700;
         }}
 
-        /* ============ MOBILE TWEAKS (leggeri) ============ */
+        /* Evidenzia Yahoo, attenua gli altri */
+        .v-links a.yf img {{ width:20px; height:20px; filter:none; }}
+        .v-links a.dim img {{ width:16px; height:16px; filter: grayscale(40%) opacity(0.85); }}
+
         @media (max-width: 480px) {{
-          /* Bottoni più "tappable" */
-          .stButton>button {{
-            padding: 12px 14px !important;
-            border-radius: 10px !important;
-          }}
-          /* Formula leggermente più compatta */
+          .stButton>button {{ padding: 12px 14px !important; border-radius: 10px !important; }}
           .v-formula-title {{ font-size: 1.05rem; }}
           .v-formula-code  {{ font-size: 15px; }}
-          /* Header card: meno padding su mobile */
           .v-card {{ padding: 10px 12px; }}
         }}
         </style>
@@ -106,7 +98,6 @@ def inject_theme_css(dark: bool):
         unsafe_allow_html=True
     )
 
-# Barra top con toggle tema (destra)
 tcol1, tcol2 = st.columns([4,1], vertical_alignment="center")
 with tcol1:
     st.title("📈 Vigil – Value Investment Graham Intelligent Lookup")
@@ -155,9 +146,9 @@ def to_number(x):
     if s in {"", "-", ","}: return None
     if "," in s and "." in s:
         if s.rfind(",") > s.rfind("."):
-            s = s.replace(".","").replace(",",".")   # IT 1.234,56 -> 1234.56
+            s = s.replace(".","").replace(",",".")
         else:
-            s = s.replace(",","")                    # US 1,234.56 -> 1234.56
+            s = s.replace(",","")
     elif "," in s:
         s = s.replace(",", ".")
     try:
@@ -199,7 +190,6 @@ def gn_formula_225(eps, bvps):
     if eps is None or bvps is None or eps <= 0 or bvps <= 0: return None
     return sqrt(22.5 * eps * bvps)
 
-# ---------- Storico: header + delta/margine ----------
 DESIRED_HIST_HEADER = ["Timestamp","Ticker","Price","EPS","BVPS","Graham","Delta","MarginPct","Fonte"]
 
 def _col_letter(n: int) -> str:
@@ -212,8 +202,7 @@ def _col_letter(n: int) -> str:
 def ensure_history_headers():
     values = ws_hist.get_all_values()
     if not values:
-        ws_hist.insert_row(DESIRED_HIST_HEADER, 1)
-        return
+        ws_hist.insert_row(DESIRED_HIST_HEADER, 1); return
     header = values[0]; changed = False
     for col in DESIRED_HIST_HEADER:
         if col not in header:
@@ -266,28 +255,41 @@ def load_fundamentals_by_letter():
     if not values or len(values) < 2:
         return pd.DataFrame(), {}
     header, data = values[0], values[1:]
-    idx_ticker = _letter_to_index(TICKER_LETTER)
-    idx_eps    = _letter_to_index(EPS_LETTER)
-    idx_bvps   = _letter_to_index(BVPS_LETTER)
-    idx_gn     = _letter_to_index(GN_LETTER)
-    idx_name   = _letter_to_index(NAME_LETTER) if NAME_LETTER else -1
+
+    def idx(letter):
+        return _letter_to_index(letter) if letter else -1
+
+    idx_ticker = idx(TICKER_LETTER)
+    idx_eps    = idx(EPS_LETTER)
+    idx_bvps   = idx(BVPS_LETTER)
+    idx_gn     = idx(GN_LETTER)
+    idx_name   = idx(NAME_LETTER)
+    idx_inv    = idx(INV_URL_LETTER)
+    idx_morn   = idx(MORN_URL_LETTER)
+    idx_isin   = idx(ISIN_LETTER)
 
     df = pd.DataFrame({
-        "Ticker_raw":  [row[idx_ticker] if idx_ticker < len(row) else "" for row in data],
-        "EPS_raw":     [row[idx_eps]    if idx_eps    < len(row) else "" for row in data],
-        "BVPS_raw":    [row[idx_bvps]   if idx_bvps   < len(row) else "" for row in data],
-        "GN_sheet_raw":[row[idx_gn]     if idx_gn     < len(row) else "" for row in data],
+        "Ticker_raw":  [row[idx_ticker] if idx_ticker >= 0 and idx_ticker < len(row) else "" for row in data],
+        "EPS_raw":     [row[idx_eps]    if idx_eps    >= 0 and idx_eps    < len(row) else "" for row in data],
+        "BVPS_raw":    [row[idx_bvps]   if idx_bvps   >= 0 and idx_bvps   < len(row) else "" for row in data],
+        "GN_sheet_raw":[row[idx_gn]     if idx_gn     >= 0 and idx_gn     < len(row) else "" for row in data],
     })
-    df["Name_raw"] = [row[idx_name] if (0 <= idx_name < len(row)) else "" for row in data] if idx_name >= 0 else ""
+    df["Name_raw"]       = [row[idx_name] if (idx_name >= 0 and idx_name < len(row)) else "" for row in data] if idx_name >= 0 else ""
+    df["InvestingURL_raw"]= [row[idx_inv]  if (idx_inv  >=0 and idx_inv  < len(row)) else "" for row in data] if idx_inv  >= 0 else ""
+    df["MorningURL_raw"]  = [row[idx_morn] if (idx_morn >=0 and idx_morn < len(row)) else "" for row in data] if idx_morn >= 0 else ""
+    df["ISIN_raw"]        = [row[idx_isin] if (idx_isin >=0 and idx_isin < len(row)) else "" for row in data] if idx_isin >= 0 else ""
 
     df = df[(df["Ticker_raw"].astype(str).str.strip()!="")].reset_index(drop=True)
-    df["Ticker"]   = df["Ticker_raw"].astype(str).str.strip().str.upper()
-    df["EPS"]      = df["EPS_raw"].apply(to_number)
-    df["BVPS"]     = df["BVPS_raw"].apply(to_number)
-    df["GN_sheet"] = df["GN_sheet_raw"].apply(to_number)
-    df["Name"]     = (df["Name_raw"].astype(str).str.strip() if isinstance(df["Name_raw"], pd.Series) else "")
+    df["Ticker"]    = df["Ticker_raw"].astype(str).str.strip().str.upper()
+    df["EPS"]       = df["EPS_raw"].apply(to_number)
+    df["BVPS"]      = df["BVPS_raw"].apply(to_number)
+    df["GN_sheet"]  = df["GN_sheet_raw"].apply(to_number)
+    df["Name"]      = (df["Name_raw"].astype(str).str.strip() if isinstance(df["Name_raw"], pd.Series) else "")
+    df["InvestingURL"] = (df["InvestingURL_raw"].astype(str).str.strip() if isinstance(df["InvestingURL_raw"], pd.Series) else "")
+    df["MorningURL"]   = (df["MorningURL_raw"].astype(str).str.strip() if isinstance(df["MorningURL_raw"], pd.Series) else "")
+    df["ISIN"]         = (df["ISIN_raw"].astype(str).str.strip() if isinstance(df["ISIN_raw"], pd.Series) else "")
 
-    return df, {"name_from_sheet": (idx_name >= 0)}
+    return df, {"has_name": idx_name>=0, "has_inv": idx_inv>=0, "has_morn": idx_morn>=0, "has_isin": idx_isin>=0}
 
 # =========================
 # UI
@@ -296,7 +298,6 @@ df, meta = load_fundamentals_by_letter()
 if df.empty:
     st.warning("Nessun dato utile. Controlla il foglio.")
 else:
-    # ------ label "TICKER — Nome" per abilitare ricerca anche per nome ------
     @st.cache_data(show_spinner=False)
     def get_display_name(tick: str) -> str:
         r = df[df["Ticker"] == tick]
@@ -311,8 +312,7 @@ else:
     for t in tickers_all:
         nm = get_display_name(t)
         lab = f"{t} — {nm}" if nm else t
-        labels.append(lab)
-        label_to_ticker[lab] = t
+        labels.append(lab); label_to_ticker[lab] = t
 
     tab1, tab2 = st.tabs(["📊 Analisi", "📜 Storico"])
 
@@ -322,25 +322,41 @@ else:
 
         row = df[df["Ticker"]==tick].iloc[0]
         eps_val, bvps_val, gn_sheet = row["EPS"], row["BVPS"], row["GN_sheet"]
-        gn_applied = gn_formula_225(eps_val, bvps_val)  # formula reale applicata
+        gn_applied = gn_formula_225(eps_val, bvps_val)
         symbol = normalize_symbol(tick)
         price_live = fetch_price_yf(symbol)
 
-        # HEADER con icone accanto al nome
         company_name = get_display_name(tick)
+        isin = str(row.get("ISIN") or "").strip()
+
+        # Costruzione link
+        yahoo_url = f"https://finance.yahoo.com/quote/{tick}"
+        inv_url   = str(row.get("InvestingURL") or "").strip()
+        mor_url   = str(row.get("MorningURL") or "").strip()
+        # Fallback: ricerche usando ISIN (più precisi) o ticker
+        query_key = isin if isin else tick
+        if not inv_url:
+            inv_url = f"https://it.investing.com/search/?q={query_key}"
+        if not mor_url:
+            mor_url = f"https://www.morningstar.com/search?query={query_key}"
+
+        # Header con icone (Yahoo più evidente)
         st.markdown(
             f"""
             <div class="v-card" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-              <h3 style="margin:0">{tick} — {company_name}</h3>
-              <span style="display:inline-flex;gap:8px;align-items:center; margin-left:4px;">
-                <a href="https://finance.yahoo.com/quote/{tick}" target="_blank" rel="noopener" title="Yahoo Finance">
-                  <img src="https://www.google.com/s2/favicons?sz=32&domain=finance.yahoo.com" style="width:16px;height:16px;">
+              <div style="display:flex;flex-direction:column;gap:2px;">
+                <h3 style="margin:0">{tick} — {company_name}</h3>
+                {"<div class='v-sub'>ISIN: "+isin+"</div>" if isin else ""}
+              </div>
+              <span class="v-links" style="display:inline-flex;gap:10px;align-items:center; margin-left:4px;">
+                <a class="yf"  href="{yahoo_url}" target="_blank" rel="noopener" title="Yahoo Finance">
+                  <img src="https://www.google.com/s2/favicons?sz=64&domain=finance.yahoo.com">
                 </a>
-                <a href="https://it.investing.com/search/?q={tick}" target="_blank" rel="noopener" title="Investing">
-                  <img src="https://www.google.com/s2/favicons?sz=32&domain=it.investing.com" style="width:16px;height:16px;">
+                <a class="dim" href="{inv_url}" target="_blank" rel="noopener" title="Investing">
+                  <img src="https://www.google.com/s2/favicons?sz=64&domain=it.investing.com">
                 </a>
-                <a href="https://www.morningstar.com/search?query={tick}" target="_blank" rel="noopener" title="Morningstar">
-                  <img src="https://www.google.com/s2/favicons?sz=32&domain=morningstar.com" style="width:16px;height:16px;">
+                <a class="dim" href="{mor_url}" target="_blank" rel="noopener" title="Morningstar">
+                  <img src="https://www.google.com/s2/favicons?sz=64&domain=morningstar.com">
                 </a>
               </span>
             </div>
@@ -348,21 +364,15 @@ else:
             unsafe_allow_html=True
         )
 
-        # =========================
-        # Metriche principali + badge valutazione
-        # =========================
+        # Metriche
         margin_pct = (1 - (price_live/gn_sheet))*100 if (price_live is not None and gn_sheet not in (None,0)) else None
-
         c1, c2, c3 = st.columns(3)
-        with c1:
-            st.metric("Prezzo live", f"{price_live:.2f}" if price_live is not None else "n/d")
-        with c2:
-            st.metric("Graham#", f"{gn_sheet:.2f}" if gn_sheet is not None else "n/d")
+        with c1: st.metric("Prezzo live", f"{price_live:.2f}" if price_live is not None else "n/d")
+        with c2: st.metric("Graham#", f"{gn_sheet:.2f}" if gn_sheet is not None else "n/d")
         with c3:
             if margin_pct is not None:
                 pct = f"{margin_pct:.2f}%"
                 if margin_pct > 33:
-                    # Verde + "Sottovalutata" + stellina dorata con G
                     html = f"""
                     <div style="text-align:center;">
                       <div style="font-weight:800; font-size:20px; color:var(--good);">{pct}</div>
@@ -390,9 +400,7 @@ else:
             else:
                 st.metric("Margine", "n/d")
 
-        # =========================
-        # Formula applicata (SOLO quella reale) — verde chiaro
-        # =========================
+        # Formula applicata (verde chiaro)
         st.markdown('<div class="v-formula-title">The GN Formula (Applied)</div>', unsafe_allow_html=True)
         if gn_applied is not None:
             st.markdown(
@@ -410,7 +418,6 @@ else:
             st.write("Formula non calcolabile (servono EPS e BVPS > 0).")
 
         st.markdown("---")
-        # ===== Toggle Admin (sopra i 3 bottoni) =====
         is_admin = st.toggle("🛠️ Modalità amministratore", value=True,
                              help="Mostra/nasconde i comandi di amministrazione")
 
@@ -446,7 +453,6 @@ else:
             dft = dfh[dfh["Ticker"].astype(str).str.upper() == (current_tick or "").upper()] if current_tick else dfh
             dft = dft.sort_values("Timestamp")
 
-            # 🔔 Ultimo snapshot SOLO QUI, sopra Intervallo date
             if not dft.empty and pd.notna(dft.iloc[-1].get("Timestamp")):
                 st.success(f"✅ Ultimo snapshot: {pd.to_datetime(dft.iloc[-1]['Timestamp']).strftime('%Y-%m-%d %H:%M:%S')}")
 
@@ -471,7 +477,6 @@ else:
                     plot_df = dft[["Timestamp","Price","Graham"]].dropna().set_index("Timestamp")
                     st.line_chart(plot_df, use_container_width=True)
 
-        # Debug in fondo (solo admin, se definito in tab1)
         if 'is_admin' in locals() and is_admin:
             st.markdown("---")
             with st.expander("🔎 Debug"):
