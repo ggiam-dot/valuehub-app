@@ -5,7 +5,7 @@ import yfinance as yf
 from math import sqrt
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
-import json, re, time
+import json, re
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -28,7 +28,51 @@ NAME_LETTER   = st.secrets.get("name_col_letter", "")
 
 st.set_page_config(page_title="Vigil – Value Investment Graham Lookup",
                    page_icon="📈", layout="centered")
-st.title("📈 Vigil – Value Investment Graham Intelligent Lookup")
+
+# =========================
+# THEME TOGGLE (Light/Dark)
+# =========================
+def inject_theme_css(dark: bool):
+    # Variabili tema (minimal, eleganti)
+    if dark:
+        bg = "#0e1117"; paper="#161a23"; text="#e6e6e6"; sub="#bdbdbd"
+        accent="#4da3ff"; border="#2a2f3a"; good="#9ad17b"; bad="#ff6b6b"; gold="#DAA520"
+    else:
+        bg = "#ffffff"; paper="#fafafa"; text="#222"; sub="#666"
+        accent="#0b74ff"; border="#e5e7eb"; good="#0a7f2e"; bad="#b00020"; gold="#DAA520"
+    st.markdown(
+        f"""
+        <style>
+        :root {{
+          --bg: {bg}; --paper: {paper}; --text: {text}; --sub: {sub};
+          --accent:{accent}; --border:{border}; --good:{good}; --bad:{bad}; --gold:{gold};
+        }}
+        .stApp {{ background-color: var(--bg); color: var(--text); }}
+        h1, h2, h3, h4, h5, h6 {{ color: var(--text) !important; }}
+        .v-card {{ background: var(--paper); border:1px solid var(--border);
+           border-radius:14px; padding:14px 16px; }}
+        .v-chip-good {{ background: rgba(10,127,46,0.08); color: var(--good);
+           font-weight:700; padding:4px 10px; border-radius:999px; }}
+        .v-chip-bad {{ background: rgba(176,0,32,0.08); color: var(--bad);
+           font-weight:700; padding:4px 10px; border-radius:999px; }}
+        .v-chip-gold {{ color: var(--gold); font-weight:800; }}
+        .v-sub {{ color: var(--sub); font-size:12px; }}
+        .v-formula-title {{ font-size: 1.15rem; font-weight: 700; margin: 6px 0 4px; }}
+        .v-formula-box {{ background: var(--paper); border: 1px solid var(--border);
+           border-radius: 12px; padding: 10px 14px; }}
+        a, a * {{ color: var(--accent) !important; }}
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+# Barra top con toggle tema (destra)
+tcol1, tcol2 = st.columns([4,1], vertical_alignment="center")
+with tcol1:
+    st.title("📈 Vigil – Value Investment Graham Intelligent Lookup")
+with tcol2:
+    dark_mode = st.toggle("🌙", value=False, help="Light/Dark mode", label_visibility="collapsed")
+inject_theme_css(dark_mode)
 
 # =========================
 # GOOGLE AUTH
@@ -182,8 +226,6 @@ def load_fundamentals_by_letter():
     if not values or len(values) < 2:
         return pd.DataFrame(), {}
     header, data = values[0], values[1:]
-    ncols = len(header)
-
     idx_ticker = _letter_to_index(TICKER_LETTER)
     idx_eps    = _letter_to_index(EPS_LETTER)
     idx_bvps   = _letter_to_index(BVPS_LETTER)
@@ -249,9 +291,9 @@ else:
         company_name = get_display_name(tick)
         st.markdown(
             f"""
-            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <div class="v-card" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
               <h3 style="margin:0">{tick} — {company_name}</h3>
-              <span style="display:inline-flex;gap:8px;align-items:center;">
+              <span style="display:inline-flex;gap:8px;align-items:center; margin-left:4px;">
                 <a href="https://finance.yahoo.com/quote/{tick}" target="_blank" rel="noopener" title="Yahoo Finance">
                   <img src="https://www.google.com/s2/favicons?sz=32&domain=finance.yahoo.com" style="width:16px;height:16px;">
                 </a>
@@ -284,38 +326,49 @@ else:
                     # Verde + "Sottovalutata" + stellina dorata con G
                     html = f"""
                     <div style="text-align:center;">
-                      <div style="font-weight:800; font-size:20px; color:#0a7f2e;">{pct}</div>
-                      <div style="margin-top:4px; font-weight:700; color:#0a7f2e; display:inline-flex; align-items:center; gap:6px;">
+                      <div style="font-weight:800; font-size:20px; color:var(--good);">{pct}</div>
+                      <div style="margin-top:4px; font-weight:700; color:var(--good); display:inline-flex; align-items:center; gap:6px;">
                         <span>Sottovalutata</span>
-                        <span style="display:inline-flex; align-items:center;">
-                          <span style="color:#DAA520;">⭐</span>
-                          <span style="margin-left:-10px; font-weight:800; color:#DAA520;">G</span>
+                        <span style="display:inline-flex; align-items:center; line-height:1;">
+                          <span class="v-chip-gold">⭐</span>
+                          <span class="v-chip-gold" style="margin-left:-10px;">G</span>
                         </span>
                       </div>
                     </div>"""
                 elif margin_pct > 0:
                     html = f"""
                     <div style="text-align:center;">
-                      <div style="font-weight:800; font-size:20px; color:#0a7f2e;">{pct}</div>
-                      <div style="margin-top:4px; font-weight:700; color:#0a7f2e;">Sottovalutata</div>
+                      <div style="font-weight:800; font-size:20px; color:var(--good);">{pct}</div>
+                      <div style="margin-top:4px; font-weight:700; color:var(--good);">Sottovalutata</div>
                     </div>"""
                 else:
                     html = f"""
                     <div style="text-align:center;">
-                      <div style="font-weight:800; font-size:20px; color:#b00020;">{pct}</div>
-                      <div style="margin-top:4px; font-weight:700; color:#b00020;">Sopravvalutata</div>
+                      <div style="font-weight:800; font-size:20px; color:var(--bad);">{pct}</div>
+                      <div style="margin-top:4px; font-weight:700; color:var(--bad);">Sopravvalutata</div>
                     </div>"""
                 st.markdown(html, unsafe_allow_html=True)
             else:
                 st.metric("Margine", "n/d")
 
         # =========================
-        # Formula (più grande ed evidente)
+        # Formula (titolo più grande + LaTeX + box numerico)
         # =========================
-        st.markdown("### The GN Formula")
+        st.markdown('<div class="v-formula-title">The GN Formula</div>', unsafe_allow_html=True)
         if gn_formula is not None:
+            # Formula matematica in LaTeX
+            st.latex(r"\text{GN} \;=\; \sqrt{22.5 \times EPS \times BVPS}")
+            # Valutazione numerica elegante
             st.markdown(
-                f"<div style='font-size:18px; font-weight:700; color:#222;'>√(22.5 × {eps_val:.4f} × {bvps_val:.4f}) = {gn_formula:.4f}</div>",
+                f"""
+                <div class="v-formula-box">
+                  <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+                              font-size: 16px; font-weight: 600;">
+                    √(22.5 × {eps_val:.4f} × {bvps_val:.4f}) = {gn_formula:.4f}
+                  </div>
+                  <div class="v-sub">EPS e BVPS dal foglio; coefficiente 22.5 (Graham)</div>
+                </div>
+                """,
                 unsafe_allow_html=True
             )
         else:
