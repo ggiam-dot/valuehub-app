@@ -9,10 +9,58 @@ from google.oauth2.service_account import Credentials
 
 st.set_page_config(page_title="Vigil – Value Investment Graham Lookup", layout="centered")
 
-# ---------- Config & Secrets ----------
-APP_PUBLIC = st.secrets["app"].get("public_mode", True)
-ADMIN_CODE = st.secrets["app"].get("admin_access_code", "")
-DEFAULT_SUFFIX = st.secrets["app"].get("default_suffix", ".MI")
+# -------------------- Helpers: Secrets & Validazioni --------------------
+def get_secret(section: str, key: str, default=None):
+    sect = st.secrets.get(section, {})
+    if not isinstance(sect, dict):
+        return default
+    return sect.get(key, default)
+
+def validate_secrets():
+    problems = []
+
+    # Sezioni richieste
+    gcp = st.secrets.get("gcp_service_account")
+    gsh = st.secrets.get("gsheet")
+    app_cfg = st.secrets.get("app", {})
+
+    if not isinstance(gcp, dict):
+        problems.append("Manca la sezione [gcp_service_account] nei Secrets.")
+    else:
+        # Campi minimi richiesti per le credenziali
+        for k in ["type","project_id","private_key_id","private_key","client_email","client_id","token_uri"]:
+            if not gcp.get(k):
+                problems.append(f"[gcp_service_account].{k} mancante.")
+
+    if not isinstance(gsh, dict):
+        problems.append("Manca la sezione [gsheet] nei Secrets.")
+    else:
+        for k in ["sheet_id","fundamentals_tab","history_tab"]:
+            if not gsh.get(k):
+                problems.append(f"[gsheet].{k} mancante.")
+
+    # app (facoltativa ma consigliata)
+    if not isinstance(app_cfg, dict):
+        problems.append("Sezione [app] mancante (verrà usata config di default).")
+
+    return problems
+
+def secrets_status_panel():
+    st.subheader("Verifica configurazione")
+    problems = validate_secrets()
+    if problems:
+        for p in problems:
+            st.error("❌ " + p)
+        st.info("Vai su Streamlit Cloud → *Manage app* → *Advanced settings* → **Secrets** e incolla il template che ti ho dato (con i tuoi valori).")
+        st.stop()
+    else:
+        st.success("✅ Secrets OK")
+
+# -------------------- Config from Secrets (con fallback sicuri) --------------------
+APP_CFG = st.secrets.get("app", {})
+APP_PUBLIC = APP_CFG.get("public_mode", True)
+ADMIN_CODE = APP_CFG.get("admin_access_code", "")
+DEFAULT_SUFFIX = APP_CFG.get("default_suffix", ".MI")
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -20,37 +68,60 @@ SCOPES = [
 ]
 
 def get_client_and_ws():
-    creds_info = dict(st.secrets["gcp_service_account"])
-    creds = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
-    gc = gspread.authorize(creds)
-    sh = gc.open_by_key(st.secrets["gsheet"]["sheet_id"])
-    fond = sh.worksheet(st.secrets["gsheet"]["fundamentals_tab"])
-    hist = sh.worksheet(st.secrets["gsheet"]["history_tab"])
-    return gc, sh, fond, hist
+    gcp = st.secrets.get("gcp_service_account", {})
+    try:
+        creds = Credentials.from_service_account_info(gcp, scopes=SCOPES)
+    except Exception as e:
+        st.error("❌ Credenziali Google non valide. Controlla `private_key` (deve avere le \\n) e i campi del JSON.")
+        st.exception(e)
+        st.stop()
+
+    try:
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_key(st.secrets["gsheet"]["sheet_id"])
+        fond = sh.worksheet(st.secrets["gsheet"]["fundamentals_tab"])
+        hist = sh.worksheet(st.secrets["gsheet"]["history_tab"])
+        return gc, sh, fond, hist
+    except gspread.exceptions.APIError as e:
+        st.error("❌ Permessi Google Sheets: assicurati di aver **condiviso lo Sheet in Editor** con la service account.")
+        st.code(st.secrets["gcp_service_account"].get("client_email","<missing>"))
+        st.exception(e)
+        st.stop()
+    except gspread.exceptions.WorksheetNotFound as e:
+        st.error("❌ Nome tab errato. Devono esistere esattamente: 'Fondamentali' e 'Storico'.")
+        st.exception(e)
+        st.stop()
+    except Exception as e:
+        st.error("❌ Errore di connessione a Google Sheets.")
+        st.exception(e)
+        st.stop()
 
 @st.cache_data(ttl=300)
 def load_fundamentals():
     _, _, fond, _ = get_client_and_ws()
     rows = fond.get_all_records()
     df = pd.DataFrame(rows)
-    # Normalize expected columns
+    # Colonne attese
     for c in ["Ticker", "EPS", "BVPS"]:
         if c not in df.columns: df[c] = np.nan
-    # If 'Graham' missing, compute from EPS/BVPS
+    # Se manca 'Graham' in Fondamentali lo calcoliamo (fallback)
     if "Graham" not in df.columns:
-        df["Graham"] = np.sqrt(22.5 * df["EPS"].astype(float).clip(lower=0) * df["BVPS"].astype(float).clip(lower=0))
-    # Optional columns pass-through
+        df["Graham"] = np.sqrt(
+            22.5 *
+            df["EPS"].astype(float).clip(lower=0) *
+            df["BVPS"].astype(float).clip(lower=0)
+        )
     for c in ["Name", "InvestingURL", "MorningstarURL", "ISIN"]:
         if c not in df.columns: df[c] = ""
     return df
 
 def latest_price(ticker: str):
     t = yf.Ticker(ticker)
-    price = None
     # fast path
     try:
-        price = float(t.fast_info.last_price)
-        if price and price > 0: return price
+        p = float(t.fast_info.last_price)
+        if p and p > 0:
+            return p
     except Exception:
         pass
     # fallback
@@ -80,18 +151,20 @@ def mos_star(mos):
     return "⭐️" if mos is not None and mos >= 0.33 else ""
 
 def can_write_actions():
-    # Protect write actions (append on Storico)
     code = st.text_input("Admin code per azioni di scrittura", type="password", key="write_code")
     return (code == ADMIN_CODE) and (ADMIN_CODE != "")
 
 def append_history(hist_ws, row_list):
-    # Row format expected by your Storico header
     hist_ws.append_row(row_list, value_input_option="USER_ENTERED")
 
-# ---------- UI ----------
+# -------------------- UI --------------------
 st.title("Vigil – Value Investment Graham Intelligent Lookup")
 st.caption("Prezzo live (Yahoo), Numero di Graham, Margine di Sicurezza e snapshot su Google Sheets.")
 
+# 1) Verifica Secrets e accesso a Google prima di procedere
+secrets_status_panel()
+
+# 2) Carica Fondamentali
 df = load_fundamentals()
 tickers = sorted([t for t in df["Ticker"].dropna().astype(str).unique() if t.strip()])
 
@@ -104,7 +177,6 @@ with col2:
 ticker = manual.strip() or sel.strip()
 
 if ticker:
-    # Recupera riga dal DF (se esiste)
     row = df[df["Ticker"].astype(str) == ticker].head(1)
     eps = float(row["EPS"].iloc[0]) if not row.empty and pd.notnull(row["EPS"].iloc[0]) else None
     bvps = float(row["BVPS"].iloc[0]) if not row.empty and pd.notnull(row["BVPS"].iloc[0]) else None
@@ -129,9 +201,8 @@ if ticker:
 **GN = √(22.5 × EPS × BVPS)**  
 Dove *EPS* = utili per azione, *BVPS* = valore contabile per azione.  
 Se EPS o BVPS ≤ 0 il GN non è definito.
-                """.strip())
+        """.strip())
 
-    # Link esterni se presenti
     c1, c2, c3 = st.columns(3)
     with c1:
         st.write(f"**ISIN**: {row['ISIN'].iloc[0] if not row.empty else '—'}")
@@ -142,7 +213,6 @@ Se EPS o BVPS ≤ 0 il GN non è definito.
         ms = row["MorningstarURL"].iloc[0] if not row.empty else ""
         if ms: st.markdown(f"[Scheda Morningstar]({ms})")
 
-    # Snapshot singolo
     st.divider()
     st.subheader("Snapshot su Storico")
     if can_write_actions():
@@ -161,8 +231,5 @@ Se EPS o BVPS ≤ 0 il GN non è definito.
     else:
         st.info("Inserisci l'admin code per abilitare lo snapshot (scrittura).")
 
-# Tabella riassuntiva (opzionale)
 with st.expander("Vedi tabella Fondamentali (read-only)"):
-    df_view = df.copy()
-    # MOS su ultimo prezzo live è costoso per tutti i ticker: lo evitiamo qui (solo read)
-    st.dataframe(df_view, use_container_width=True)
+    st.dataframe(df, use_container_width=True)
