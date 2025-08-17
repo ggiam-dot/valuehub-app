@@ -279,15 +279,18 @@ else:
             st.metric("Graham#", f"{gn_sheet:.2f}" if gn_sheet is not None else "n/d")
         with c3:
             if margin_pct is not None:
-                # Percentuale grande + etichetta sotto (minimal)
                 pct = f"{margin_pct:.2f}%"
                 if margin_pct > 33:
-                    # G dorata minimal (colore gold)
+                    # Verde + "Sottovalutata" + stellina dorata con G
                     html = f"""
                     <div style="text-align:center;">
                       <div style="font-weight:800; font-size:20px; color:#0a7f2e;">{pct}</div>
-                      <div style="margin-top:4px; font-weight:700; color:#0a7f2e;">
-                        <span style="color:#DAA520;">G</span>
+                      <div style="margin-top:4px; font-weight:700; color:#0a7f2e; display:inline-flex; align-items:center; gap:6px;">
+                        <span>Sottovalutata</span>
+                        <span style="display:inline-flex; align-items:center;">
+                          <span style="color:#DAA520;">⭐</span>
+                          <span style="margin-left:-10px; font-weight:800; color:#DAA520;">G</span>
+                        </span>
                       </div>
                     </div>"""
                 elif margin_pct > 0:
