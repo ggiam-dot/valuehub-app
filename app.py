@@ -33,34 +33,54 @@ st.set_page_config(page_title="Vigil – Value Investment Graham Lookup",
 # THEME TOGGLE (Light/Dark)
 # =========================
 def inject_theme_css(dark: bool):
-    # Variabili tema (minimal, eleganti)
+    # Palette tema
     if dark:
         bg = "#0e1117"; paper="#161a23"; text="#e6e6e6"; sub="#bdbdbd"
         accent="#4da3ff"; border="#2a2f3a"; good="#9ad17b"; bad="#ff6b6b"; gold="#DAA520"
+        metric_val = "#f2f2f2"; metric_lab = "#cfcfcf"
+        formula_bg = "#0f223a"; formula_border = "#285ea8"; formula_text = "#e9f1ff"
     else:
         bg = "#ffffff"; paper="#fafafa"; text="#222"; sub="#666"
         accent="#0b74ff"; border="#e5e7eb"; good="#0a7f2e"; bad="#b00020"; gold="#DAA520"
+        metric_val = "#111"; metric_lab = "#444"
+        formula_bg = "#eef5ff"; formula_border = "#cfe2ff"; formula_text = "#0b3b82"
+
     st.markdown(
         f"""
         <style>
         :root {{
           --bg: {bg}; --paper: {paper}; --text: {text}; --sub: {sub};
           --accent:{accent}; --border:{border}; --good:{good}; --bad:{bad}; --gold:{gold};
+          --metric-val:{metric_val}; --metric-lab:{metric_lab};
+          --formula-bg:{formula_bg}; --formula-border:{formula_border}; --formula-text:{formula_text};
         }}
         .stApp {{ background-color: var(--bg); color: var(--text); }}
         h1, h2, h3, h4, h5, h6 {{ color: var(--text) !important; }}
+        a, a * {{ color: var(--accent) !important; }}
+
+        /* Cards e chip */
         .v-card {{ background: var(--paper); border:1px solid var(--border);
            border-radius:14px; padding:14px 16px; }}
-        .v-chip-good {{ background: rgba(10,127,46,0.08); color: var(--good);
-           font-weight:700; padding:4px 10px; border-radius:999px; }}
-        .v-chip-bad {{ background: rgba(176,0,32,0.08); color: var(--bad);
-           font-weight:700; padding:4px 10px; border-radius:999px; }}
         .v-chip-gold {{ color: var(--gold); font-weight:800; }}
         .v-sub {{ color: var(--sub); font-size:12px; }}
-        .v-formula-title {{ font-size: 1.15rem; font-weight: 700; margin: 6px 0 4px; }}
-        .v-formula-box {{ background: var(--paper); border: 1px solid var(--border);
-           border-radius: 12px; padding: 10px 14px; }}
-        a, a * {{ color: var(--accent) !important; }}
+
+        /* Metriche: forza colori label/valore in dark e light */
+        [data-testid="stMetric"] > div > div:nth-child(1) {{ color: var(--metric-lab) !important; }}
+        [data-testid="stMetricValue"] {{ color: var(--metric-val) !important; }}
+        [data-testid="stMetricDelta"] {{ color: var(--metric-val) !important; }}
+
+        /* Box formula evidenziato */
+        .v-formula-title {{ font-size: 1.15rem; font-weight: 800; margin: 6px 0 8px; }}
+        .v-formula-box {{
+          background: var(--formula-bg);
+          border: 1px solid var(--formula-border);
+          border-radius: 12px; padding: 12px 14px;
+          color: var(--formula-text);
+        }}
+        .v-formula-code {{
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+          font-size: 16px; font-weight: 700;
+        }}
         </style>
         """,
         unsafe_allow_html=True
@@ -262,8 +282,7 @@ else:
         r = df[df["Ticker"] == tick]
         if not r.empty:
             n = str(r.iloc[0].get("Name") or "").strip()
-            if n:
-                return n
+            if n: return n
         return fetch_company_name_yf(normalize_symbol(tick)) or ""
 
     tickers_all = sorted(df["Ticker"].tolist())
@@ -283,7 +302,7 @@ else:
 
         row = df[df["Ticker"]==tick].iloc[0]
         eps_val, bvps_val, gn_sheet = row["EPS"], row["BVPS"], row["GN_sheet"]
-        gn_formula = gn_formula_225(eps_val, bvps_val)
+        gn_applied = gn_formula_225(eps_val, bvps_val)  # formula reale applicata
         symbol = normalize_symbol(tick)
         price_live = fetch_price_yf(symbol)
 
@@ -300,7 +319,7 @@ else:
                 <a href="https://www.google.com/search?q=Investing+{tick}" target="_blank" rel="noopener" title="Investing">
                   <img src="https://www.google.com/s2/favicons?sz=32&domain=it.investing.com" style="width:16px;height:16px;">
                 </a>
-                <a href="https://www.google.com/search?q=Morningstar+{tick}" target="_blank" rel="noopener" title="Morningstar">
+                <a href="https://www.google.com/s2/favicons?sz=32&domain=morningstar.com" target="_blank" rel="noopener" title="Morningstar">
                   <img src="https://www.google.com/s2/favicons?sz=32&domain=morningstar.com" style="width:16px;height:16px;">
                 </a>
               </span>
@@ -352,19 +371,15 @@ else:
                 st.metric("Margine", "n/d")
 
         # =========================
-        # Formula (titolo più grande + LaTeX + box numerico)
+        # Formula applicata (SOLO quella reale) — ben evidenziata
         # =========================
-        st.markdown('<div class="v-formula-title">The GN Formula</div>', unsafe_allow_html=True)
-        if gn_formula is not None:
-            # Formula matematica in LaTeX
-            st.latex(r"\text{GN} \;=\; \sqrt{22.5 \times EPS \times BVPS}")
-            # Valutazione numerica elegante
+        st.markdown('<div class="v-formula-title">The GN Formula (Applied)</div>', unsafe_allow_html=True)
+        if gn_applied is not None:
             st.markdown(
                 f"""
                 <div class="v-formula-box">
-                  <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-                              font-size: 16px; font-weight: 600;">
-                    √(22.5 × {eps_val:.4f} × {bvps_val:.4f}) = {gn_formula:.4f}
+                  <div class="v-formula-code">
+                    √(22.5 × {eps_val:.4f} × {bvps_val:.4f}) = {gn_applied:.4f}
                   </div>
                   <div class="v-sub">EPS e BVPS dal foglio; coefficiente 22.5 (Graham)</div>
                 </div>
