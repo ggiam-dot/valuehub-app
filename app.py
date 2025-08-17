@@ -88,13 +88,8 @@ def inject_theme_css(dark: bool):
           font-size: 16px; font-weight: 700;
         }}
 
-        /* ============ MOBILE TWEAKS ============ */
+        /* ============ MOBILE TWEAKS (leggeri) ============ */
         @media (max-width: 480px) {{
-          /* Impila le colonne (metriche) su una colonna */
-          div[data-testid="column"] {{
-            width: 100% !important;
-            flex: 0 0 100% !important;
-          }}
           /* Bottoni più "tappable" */
           .stButton>button {{
             padding: 12px 14px !important;
@@ -341,10 +336,10 @@ else:
                 <a href="https://finance.yahoo.com/quote/{tick}" target="_blank" rel="noopener" title="Yahoo Finance">
                   <img src="https://www.google.com/s2/favicons?sz=32&domain=finance.yahoo.com" style="width:16px;height:16px;">
                 </a>
-                <a href="https://www.google.com/s2/favicons?sz=32&domain=it.investing.com" target="_blank" rel="noopener" title="Investing">
+                <a href="https://it.investing.com/search/?q={tick}" target="_blank" rel="noopener" title="Investing">
                   <img src="https://www.google.com/s2/favicons?sz=32&domain=it.investing.com" style="width:16px;height:16px;">
                 </a>
-                <a href="https://www.google.com/s2/favicons?sz=32&domain=morningstar.com" target="_blank" rel="noopener" title="Morningstar">
+                <a href="https://www.morningstar.com/search?query={tick}" target="_blank" rel="noopener" title="Morningstar">
                   <img src="https://www.google.com/s2/favicons?sz=32&domain=morningstar.com" style="width:16px;height:16px;">
                 </a>
               </span>
