@@ -219,7 +219,6 @@ else:
     # ------ label "TICKER — Nome" per abilitare ricerca anche per nome ------
     @st.cache_data(show_spinner=False)
     def get_display_name(tick: str) -> str:
-        # preferisci il Nome da sheet se presente, altrimenti Yahoo
         r = df[df["Ticker"] == tick]
         if not r.empty:
             n = str(r.iloc[0].get("Name") or "").strip()
@@ -270,16 +269,22 @@ else:
             unsafe_allow_html=True
         )
 
+        # Metriche
         margin_pct = (1 - (price/gn_sheet))*100 if (price is not None and gn_sheet not in (None,0)) else None
-
         c1,c2,c3 = st.columns(3)
         c1.metric("Prezzo live", f"{price:.2f}" if price is not None else "n/d")
         c2.metric("Graham#", f"{gn_sheet:.2f}" if gn_sheet is not None else "n/d")
+        c3.metric("Margine", f"{margin_pct:.2f}%" if margin_pct is not None else "n/d")
+
+        # Badges valutazione colorati (ROSSO/VERDE, stellina se >33%)
         if margin_pct is not None:
-            label = "✅ Sottovalutata" if margin_pct > 0 else "❌ Sopravvalutata"
-            c3.metric("Margine", f"{margin_pct:.2f}%", label)
-        else:
-            c3.metric("Margine", "n/d")
+            if margin_pct > 33:
+                badge = '<span style="background:#e6ffed;color:#087f23;padding:4px 10px;border-radius:999px;font-weight:700;">⭐ Sottovalutata (MoS &gt; 33%)</span>'
+            elif margin_pct > 0:
+                badge = '<span style="background:#e6ffed;color:#087f23;padding:4px 10px;border-radius:999px;font-weight:700;">Sottovalutata</span>'
+            else:
+                badge = '<span style="background:#ffecec;color:#b00020;padding:4px 10px;border-radius:999px;font-weight:700;">Sopravvalutata</span>'
+            st.markdown(f"<div style='margin-top:-6px'>{badge}</div>", unsafe_allow_html=True)
 
         st.markdown("### The GN Formula")
         if gn_calc is not None:
@@ -316,7 +321,6 @@ else:
     with tab2:
         dfh = load_history()
         if not dfh.empty:
-            # filtra per il ticker selezionato nella tab Analisi (se presente)
             try:
                 current_tick = label_to_ticker[selected_label]
             except Exception:
@@ -351,7 +355,7 @@ else:
                     st.line_chart(plot_df, use_container_width=True)
 
         # Debug in fondo (solo admin)
-        if is_admin:
+        if 'is_admin' in locals() and is_admin:
             st.markdown("---")
             with st.expander("🔎 Debug"):
                 st.write(df.head())
