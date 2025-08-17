@@ -1,0 +1,16 @@
+# Ambienti e cache
+.venv/
+__pycache__/
+*.pyc
+
+# Config locali/secret
+.streamlit/
+secrets.toml
+*.env
+
+# File di sistema
+.DS_Store
+
+# IDE (opzionali)
+.vscode/
+.idea/
