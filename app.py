@@ -30,7 +30,7 @@ st.set_page_config(page_title="Vigil – Value Investment Graham Lookup",
                    page_icon="📈", layout="centered")
 
 # =========================
-# THEME TOGGLE (Light/Dark)
+# THEME TOGGLE (Light/Dark) + Mobile tweaks
 # =========================
 def inject_theme_css(dark: bool):
     # Palette tema
@@ -38,12 +38,18 @@ def inject_theme_css(dark: bool):
         bg = "#0e1117"; paper="#161a23"; text="#e6e6e6"; sub="#bdbdbd"
         accent="#4da3ff"; border="#2a2f3a"; good="#9ad17b"; bad="#ff6b6b"; gold="#DAA520"
         metric_val = "#f2f2f2"; metric_lab = "#cfcfcf"
-        formula_bg = "#0f223a"; formula_border = "#285ea8"; formula_text = "#e9f1ff"
+        # Formula in verde chiaro (dark)
+        formula_bg    = "#10351e"   # sfondo verde scuro elegante
+        formula_border= "#2f8f5b"   # bordo verde
+        formula_text  = "#e6ffef"   # testo verde chiarissimo
     else:
         bg = "#ffffff"; paper="#fafafa"; text="#222"; sub="#666"
         accent="#0b74ff"; border="#e5e7eb"; good="#0a7f2e"; bad="#b00020"; gold="#DAA520"
         metric_val = "#111"; metric_lab = "#444"
-        formula_bg = "#eef5ff"; formula_border = "#cfe2ff"; formula_text = "#0b3b82"
+        # Formula in verde chiaro (light)
+        formula_bg    = "#e9f8ef"   # sfondo verde chiarissimo
+        formula_border= "#b8e6c9"   # bordo verde tenue
+        formula_text  = "#0d5b2a"   # testo verde profondo
 
     st.markdown(
         f"""
@@ -69,7 +75,7 @@ def inject_theme_css(dark: bool):
         [data-testid="stMetricValue"] {{ color: var(--metric-val) !important; }}
         [data-testid="stMetricDelta"] {{ color: var(--metric-val) !important; }}
 
-        /* Box formula evidenziato */
+        /* Box formula evidenziato (verde chiaro) */
         .v-formula-title {{ font-size: 1.15rem; font-weight: 800; margin: 6px 0 8px; }}
         .v-formula-box {{
           background: var(--formula-bg);
@@ -80,6 +86,25 @@ def inject_theme_css(dark: bool):
         .v-formula-code {{
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
           font-size: 16px; font-weight: 700;
+        }}
+
+        /* ============ MOBILE TWEAKS ============ */
+        @media (max-width: 480px) {{
+          /* Impila le colonne (metriche) su una colonna */
+          div[data-testid="column"] {{
+            width: 100% !important;
+            flex: 0 0 100% !important;
+          }}
+          /* Bottoni più "tappable" */
+          .stButton>button {{
+            padding: 12px 14px !important;
+            border-radius: 10px !important;
+          }}
+          /* Formula leggermente più compatta */
+          .v-formula-title {{ font-size: 1.05rem; }}
+          .v-formula-code  {{ font-size: 15px; }}
+          /* Header card: meno padding su mobile */
+          .v-card {{ padding: 10px 12px; }}
         }}
         </style>
         """,
@@ -316,7 +341,7 @@ else:
                 <a href="https://finance.yahoo.com/quote/{tick}" target="_blank" rel="noopener" title="Yahoo Finance">
                   <img src="https://www.google.com/s2/favicons?sz=32&domain=finance.yahoo.com" style="width:16px;height:16px;">
                 </a>
-                <a href="https://www.google.com/search?q=Investing+{tick}" target="_blank" rel="noopener" title="Investing">
+                <a href="https://www.google.com/s2/favicons?sz=32&domain=it.investing.com" target="_blank" rel="noopener" title="Investing">
                   <img src="https://www.google.com/s2/favicons?sz=32&domain=it.investing.com" style="width:16px;height:16px;">
                 </a>
                 <a href="https://www.google.com/s2/favicons?sz=32&domain=morningstar.com" target="_blank" rel="noopener" title="Morningstar">
@@ -371,7 +396,7 @@ else:
                 st.metric("Margine", "n/d")
 
         # =========================
-        # Formula applicata (SOLO quella reale) — ben evidenziata
+        # Formula applicata (SOLO quella reale) — verde chiaro
         # =========================
         st.markdown('<div class="v-formula-title">The GN Formula (Applied)</div>', unsafe_allow_html=True)
         if gn_applied is not None:
