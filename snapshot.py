@@ -1,10 +1,9 @@
 # snapshot.py – salva snapshot su "Storico" (chiusura), calcola GN da EPS/BVPS se possibile
-import os, json, math, re
+import os, json, re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import gspread, yfinance as yf
 from google.oauth2.service_account import Credentials
-import pandas as pd
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"]
 
@@ -44,7 +43,6 @@ def to_num(x):
 
 def close_price(sym):
     t = yf.Ticker(sym)
-    # chiusura più recente
     try:
         h = t.history(period="10d", interval="1d")["Close"].dropna()
         if len(h) > 0:
