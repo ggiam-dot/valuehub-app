@@ -389,4 +389,76 @@ else:
         with c3:
             if margin_pct is not None:
                 label = "Sottovalutata" if margin_pct>0 else "Sopravvalutata"
-                st.metric("Margine", f"{margi
+                st.metric("Margine", f"{margin_pct:.2f}%")
+                st.caption(label)
+            else:
+                st.metric("Margine","n/d")
+        with c4:
+            st.metric("GN (da EPS×BVPS)", f"{gn_applied:.2f}" if gn_applied is not None else "n/d")
+
+        # Formula
+        st.markdown('<div class="v-formula-title">The GN Formula (Applied)</div>', unsafe_allow_html=True)
+        if gn_applied is not None:
+            st.markdown(f"""
+            <div class="v-formula-box">
+              <div class="v-formula-code">√(22.5 × {eps_val:.4f} × {bvps_val:.4f}) = {gn_applied:.4f}</div>
+              <div class="v-sub">EPS e BVPS dal foglio; coefficiente 22.5 (Graham)</div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.write("Formula non calcolabile (servono EPS e BVPS > 0).")
+
+        st.markdown("---")
+        is_admin = st.toggle("🛠️ Modalità amministratore", value=True, help="Comandi di scrittura sul foglio")
+        if is_admin:
+            col1,col2,col3,col4 = st.columns(4)
+            if col1.button("🔄 Aggiorna dal foglio", use_container_width=True):
+                st.cache_data.clear(); st.rerun()
+            if col2.button("✍️ Riscrivi Graham# su Sheet", use_container_width=True):
+                gn_series = df.apply(lambda r: gn_225(r["EPS"], r["BVPS"]), axis=1)
+                out = [[("" if (v is None or pd.isna(v)) else float(v))] for v in gn_series]
+                start_row = 2; end_row = start_row + len(out) - 1
+                ws_fund.update(f"{GN_LETTER}{start_row}:{GN_LETTER}{end_row}", out, value_input_option="USER_ENTERED")
+                st.success("Colonna Graham# aggiornata (22.5×EPS×BVPS)."); st.cache_data.clear(); st.rerun()
+            if col3.button("💾 Salva snapshot", use_container_width=True):
+                now_str = datetime.now(ROME).strftime("%Y-%m-%d %H:%M:%S")
+                append_history_row(now_str, tick, price_val, eps_val, bvps_val, gn_sheet, f"App ({mode_badge})")
+                st.success("Snapshot salvato.")
+            if col4.button("🗂️ Snapshot TUTTI i titoli", use_container_width=True):
+                now_str = datetime.now(ROME).strftime("%Y-%m-%d %H:%M:%S")
+                rows_out=[]
+                for _,r in df.iterrows():
+                    tck = str(r["Ticker"]).strip().upper()
+                    if not tck: continue
+                    px = get_price(normalize_symbol(tck), mode)
+                    rows_out.append((tck, px, r["EPS"], r["BVPS"], r["GN_sheet"], f"App ({mode_badge})"))
+                append_history_bulk(now_str, rows_out)
+                st.success(f"Snapshot di {len(rows_out)} titoli salvato ✅")
+
+    with tab2:
+        dfh = pd.DataFrame(ws_hist.get_all_records())
+        if not dfh.empty:
+            dfh["Timestamp"] = pd.to_datetime(dfh["Timestamp"], errors="coerce")
+            try: current_tick = label_to_ticker[selected_label]
+            except: current_tick = None
+            dft = dfh[dfh["Ticker"].astype(str).str.upper()==(current_tick or "").upper()] if current_tick else dfh
+            dft = dft.sort_values("Timestamp")
+            if not dft.empty and pd.notna(dft.iloc[-1].get("Timestamp")):
+                st.success(f"✅ Ultimo snapshot: {pd.to_datetime(dft.iloc[-1]['Timestamp']).strftime('%Y-%m-%d %H:%M:%S')}")
+            if not dft.empty:
+                min_day = pd.to_datetime(dft["Timestamp"]).dt.date.min()
+                max_day = pd.to_datetime(dft["Timestamp"]).dt.date.max()
+                start,end = st.date_input("Intervallo date", value=(min_day,max_day),
+                                          min_value=min_day, max_value=max_day)
+                if isinstance(start,date) and isinstance(end,date) and start<=end:
+                    dft = dft[(pd.to_datetime(dft["Timestamp"]).dt.date>=start) &
+                              (pd.to_datetime(dft["Timestamp"]).dt.date<=end)]
+                show_cols = [c for c in ["Timestamp","Ticker","Price","EPS","BVPS","Graham","Delta","MarginPct","Fonte"] if c in dft.columns]
+                st.dataframe(dft[show_cols], use_container_width=True, hide_index=True)
+                csv = dft[show_cols].to_csv(index=False).encode("utf-8")
+                st.download_button("⬇️ Scarica CSV", data=csv, file_name=f"storico_{(current_tick or 'ALL')}.csv", mime="text/csv")
+                if ("Price" in dft.columns) and ("Graham" in dft.columns):
+                    plot_df = dft[["Timestamp","Price","Graham"]].dropna().set_index("Timestamp")
+                    st.line_chart(plot_df, use_container_width=True)
+        else:
+            st.info("La tab Storico è vuota.")
