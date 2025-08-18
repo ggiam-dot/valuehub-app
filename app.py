@@ -43,18 +43,18 @@ if "dark" not in st.session_state:
 
 def inject_theme_css(dark: bool):
     if dark:
-        # Contrasti alti
-        bg="#0b0f16"; paper="#131a24"; text="#f4f7fb"; sub="#c6cfdb"
-        accent="#66b1ff"; border="#2a3340"; good="#a7e495"; bad="#ff7a7a"; gold="#FFD166"
+        # Contrasto alto
+        bg="#0b0f16"; paper="#131a24"; text="#f3f7fb"; sub="#c6cfdb"
+        accent="#66b1ff"; border="#2a3340"; good="#90d988"; bad="#ff7a7a"; gold="#FFD166"
         metric_val="#ffffff"; metric_lab="#d9e2ef"
         formula_bg="#0f2a1a"; formula_border="#2f8f5b"; formula_text="#eaffee"
-        stripe_bg="#0f1320"; pill_bg="#1b2432"; btn_bg="#17202b"; btn_txt="#f4f7fb"
+        stripe_bg="#0f1320"; pill_bg="#1b2432"; btn_bg="#17202b"; btn_txt="#f3f7fb"
     else:
-        bg="#ffffff"; paper="#ffffff"; text="#121212"; sub="#4a4a4a"
+        bg="#ffffff"; paper="#ffffff"; text="#151515"; sub="#4a4a4a"
         accent="#0a66ff"; border="#dfe3ea"; good="#0b7c34"; bad="#c62828"; gold="#C79200"
         metric_val="#111111"; metric_lab="#333333"
         formula_bg="#e9f7ef"; formula_border="#b8e6c9"; formula_text="#0d5b2a"
-        stripe_bg="#f5f7fa"; pill_bg="#eef3ff"; btn_bg="#ffffff"; btn_txt="#111111"
+        stripe_bg="#f5f7fa"; pill_bg="#eef3ff"; btn_bg="#ffffff"; btn_txt="#151515"
 
     st.markdown(f"""
     <style>
@@ -67,10 +67,10 @@ def inject_theme_css(dark: bool):
     }}
     .stApp {{ background-color: var(--bg); color: var(--text); }}
 
-    /* Titolo compatto */
-    .v-title {{ font-weight: 800; font-size: 1.28rem; line-height: 1.2; margin: 0 0 6px 0; }}
+    /* Titolo compatto e un filo più grande */
+    .v-title {{ font-weight: 800; font-size: 1.36rem; line-height: 1.2; margin: 0 0 8px 0; }}
     .v-title .v-title-light {{ font-weight: 700; opacity: .9; }}
-    @media (max-width: 640px) {{ .v-title {{ font-size: 1.08rem; }} }}
+    @media (max-width: 640px) {{ .v-title {{ font-size: 1.16rem; }} }}
 
     .v-card {{ background: var(--paper); border:1px solid var(--border);
                border-radius:14px; padding:12px 14px; }}
@@ -80,38 +80,36 @@ def inject_theme_css(dark: bool):
     .v-link {{ display:flex; gap:8px; align-items:center; font-size:14px; }}
     .v-link img {{ width:20px; height:20px; }}
 
-    .pill {{ background:var(--pill-bg); padding:4px 10px; border-radius:999px;
-             border:1px solid var(--border); font-weight:700; }}
+    .pill {{ background:var(--pill-bg); padding:6px 12px; border-radius:999px;
+             border:1px solid var(--border); font-weight:800; }}
 
     .btn-link {{ background:var(--btn-bg); color:var(--btn-txt) !important; border:1px solid var(--border);
-                 padding:8px 12px; border-radius:10px; text-decoration:none; display:inline-block; }}
+                 padding:8px 12px; border-radius:12px; text-decoration:none; display:inline-block; font-weight:700; }}
     .btn-link:hover {{ border-color:var(--accent); }}
 
     .stripe {{
       background: var(--stripe-bg); border: 1px solid var(--border); border-radius: 12px;
-      padding: 8px 12px; display:flex; align-items:center; justify-content:space-between; gap: 10px;
-      margin-bottom: 10px; flex-wrap: wrap;
+      padding: 10px 12px; display:flex; align-items:center; justify-content:space-between; gap: 10px;
+      margin-bottom: 12px; flex-wrap: wrap;
     }}
-    .pct-pos {{ color: var(--good); font-weight:800; }}
-    .pct-neg {{ color: var(--bad);  font-weight:800; }}
+    .pct-pos {{ color: var(--good); font-weight:900; }}
+    .pct-neg {{ color: var(--bad);  font-weight:900; }}
 
-    /* Metriche molto leggibili */
+    /* Metriche leggibili */
     [data-testid="stMetric"] > div > div:nth-child(1) {{ color: var(--metric-lab) !important; font-weight:700; }}
     [data-testid="stMetricValue"] {{ color: var(--metric-val) !important; font-weight:900; }}
 
-    /* Pulsanti Streamlit uniformi e ben visibili */
+    /* Pulsanti uniformi */
     .stButton>button {{
       width: 100%;
       background: var(--btn-bg); color: var(--btn-txt);
-      border: 1px solid var(--border); border-radius: 10px;
-      padding: 10px 14px; font-weight: 700;
+      border: 1px solid var(--border); border-radius: 12px;
+      padding: 10px 14px; font-weight: 800;
     }}
     .stButton>button:hover {{ border-color: var(--accent); }}
 
-    /* Mobile */
-    @media (max-width: 640px) {{
-      .stTabs [data-baseweb="tab-list"] {{ gap: 8px; }}
-    }}
+    /* Radio più distanziate */
+    [data-baseweb="radio"] > div {{ gap: 14px; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -215,20 +213,20 @@ def get_price(symbol: str, mode: str):  # mode: live | close | auto
     if mode == "close": return price_close(symbol)
     return price_live(symbol) if is_it_market_open() else price_close(symbol)
 
-# -------- FTSE MIB (attuale/chiusura + % giorno) --------
+# -------- FTSE MIB (robusto: attuale, ultima chiusura, precedente) --------
 @st.cache_data(ttl=PRICE_TTL, show_spinner=False)
 def mib_summary():
     t = yf.Ticker(MIB_SYMBOL)
     live = last_close = prev_close = None
-    # close serie giornaliera
     try:
-        h = t.history(period="5d", interval="1d")
-        if not h.empty:
-            last_close = float(h["Close"].dropna().iloc[-1])
-            if len(h) >= 2:
-                prev_close = float(h["Close"].dropna().iloc[-2])
+        # chiusure: prendi le ultime 2 valide (no NaN)
+        h = t.history(period="10d", interval="1d")
+        closes = h["Close"].dropna()
+        if not closes.empty:
+            last_close = float(closes.iloc[-1])
+            if len(closes) >= 2:
+                prev_close = float(closes.iloc[-2])
     except: pass
-    # live
     try:
         fi = getattr(t,"fast_info",None)
         if fi:
@@ -333,7 +331,7 @@ def load_fundamentals_by_letter():
 # ============ UI ============
 df, _ = load_fundamentals_by_letter()
 
-# --- FTSE MIB STRIPE (attuale/chiusura) ---
+# --- FTSE MIB STRIPE ---
 mib = mib_summary()
 open_now = is_it_market_open()
 main_val = mib["live"] if (open_now and mib["live"] is not None) else mib["last_close"]
@@ -341,7 +339,7 @@ base = mib["prev_close"]
 pct = None if (main_val is None or base is None or base==0) else ((main_val - base)/base)*100
 status = "Aperto" if open_now else "Chiuso"
 pct_html = "" if pct is None else f"<span class='{'pct-pos' if pct>=0 else 'pct-neg'}'>{pct:+.2f}%</span>"
-sub = f"Chiusura: {fmt_it(mib['last_close'],3)} • Precedente: {fmt_it(mib['prev_close'],3)}" if mib["last_close"] and mib["prev_close"] else ""
+sub = f"Ultima chiusura: {fmt_it(mib['last_close'],3)} • Precedente: {fmt_it(mib['prev_close'],3)}" if mib["last_close"] and mib["prev_close"] else "Ultima chiusura non disponibile"
 
 st.markdown(f"""
 <div class="stripe">
@@ -401,7 +399,7 @@ else:
 
         company = get_display_name(tick)
 
-        # Link con ISIN validato (fallback ticker)
+        # Link con ISIN validato
         isin_raw = str(row.get("ISIN") or "").strip().upper()
         isin = isin_raw if ISIN_REGEX.match(isin_raw) else ""
         query_key = isin if isin else tick
@@ -429,25 +427,25 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-        # Metriche (prezzi 3 decimali)
+        # Metriche: 3 colonne
         margin_pct = (1 - (price_val/gn_sheet))*100 if (price_val is not None and gn_sheet not in (None,0)) else None
-        c1,c2,c3,c4 = st.columns(4)
+        c1,c2,c3 = st.columns(3)
         with c1: st.metric(f"Prezzo ({mode_badge})", fmt_it(price_val,3) if price_val is not None else "n/d")
         with c2: st.metric("Graham#", fmt_it(gn_sheet,2) if gn_sheet is not None else "n/d")
-        with c3:
-            st.metric("Margine", (fmt_it(margin_pct,2)+"%") if margin_pct is not None else "n/d")
-        with c4:
-            st.metric("GN (da EPS×BVPS)", fmt_it(gn_applied,2) if gn_applied is not None else "n/d")
+        with c3: st.metric("Margine", (fmt_it(margin_pct,2)+"%") if margin_pct is not None else "n/d")
 
-        # Formula
-        st.markdown('<div class="v-formula-title">The GN Formula (Applied)</div>', unsafe_allow_html=True)
+        # Formula – grande e verde + formula generica
+        st.markdown('<div class="v-formula-title" style="color:var(--good)">The GN Formula (Applied)</div>', unsafe_allow_html=True)
         if gn_applied is not None:
             st.markdown(
-                f"<div class='v-formula-box'><div class='v-formula-code'>√(22.5 × {eps_val:.4f} × {bvps_val:.4f}) = {gn_applied:.4f}</div><div class='v-sub'>EPS e BVPS dal foglio; coefficiente 22.5 (Graham)</div></div>",
+                f"<div class='v-formula-box'><div class='v-formula-code' style='font-size:17px;'>√(22.5 × {eps_val:.4f} × {bvps_val:.4f}) = {gn_applied:.4f}</div><div class='v-sub'>Formula generale: √(22.5 × EPS × BVPS). EPS e BVPS dal foglio; coefficiente 22.5 (Graham).</div></div>",
                 unsafe_allow_html=True
             )
         else:
-            st.write("Formula non calcolabile (servono EPS e BVPS > 0).")
+            st.markdown(
+                "<div class='v-formula-box'><div class='v-formula-code'>√(22.5 × EPS × BVPS)</div><div class='v-sub'>Servono EPS e BVPS > 0 per calcolare il numero di Graham.</div></div>",
+                unsafe_allow_html=True
+            )
 
         st.markdown("---")
         is_admin = st.toggle("🛠️ Modalità amministratore", value=True, help="Comandi di scrittura sul foglio")
