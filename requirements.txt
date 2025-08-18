@@ -1,7 +1,8 @@
-streamlit
+streamlit>=1.36
+streamlit-autorefresh
 pandas
 numpy
 yfinance
 gspread
 google-auth
-google-auth-oauthlib
+pytz
