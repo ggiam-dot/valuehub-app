@@ -9,19 +9,18 @@ import json, re
 
 import gspread
 from google.oauth2.service_account import Credentials
-from streamlit_autorefresh import st_autorefresh   # NEW
+from streamlit_autorefresh import st_autorefresh
 
 # =========================
 # CONFIG (da Secrets)
 # =========================
-SHEET_ID  = st.secrets.get("google_sheet_id")                  # obbligatorio
+SHEET_ID  = st.secrets.get("google_sheet_id")
 FUND_TAB  = st.secrets.get("fund_tab", "Fondamentali")
 HIST_TAB  = st.secrets.get("hist_tab", "Storico")
 YF_SUFFIX = st.secrets.get("yf_suffix", ".MI")
 MIB_SYMBOL = st.secrets.get("mib_symbol", "^FTSEMIB")
 BORSA_LINK = st.secrets.get("borsa_link", "https://www.borsaitaliana.it/borsa/indice/ftse-mib/dettaglio.html")
 
-# Lettere di colonna
 TICKER_LETTER = st.secrets.get("ticker_col_letter", "A")
 EPS_LETTER    = st.secrets.get("eps_col_letter", "B")
 BVPS_LETTER   = st.secrets.get("bvps_col_letter", "C")
@@ -31,31 +30,31 @@ INV_URL_LETTER= st.secrets.get("investing_col_letter", "")
 MORN_URL_LETTER=st.secrets.get("morning_col_letter", "")
 ISIN_LETTER   = st.secrets.get("isin_col_letter", "")
 
-# Prezzi: TTL breve per evitare rate-limit; puoi cambiare nei secrets
 PRICE_TTL = int(st.secrets.get("price_ttl_seconds", 30))
 
 st.set_page_config(page_title="Vigil – Value Investment Graham Lookup",
                    page_icon="📈", layout="wide")
 
 # =========================
-# THEME & CSS (mobile-first + pulsanti armonici)
+# THEME & CSS (alta leggibilità + mobile)
 # =========================
 if "dark" not in st.session_state:
     st.session_state.dark = False
 
 def inject_theme_css(dark: bool):
     if dark:
-        bg="#0e1117"; paper="#161a23"; text="#e6e6e6"; sub="#bdbdbd"
-        accent="#4da3ff"; border="#2a2f3a"; good="#9ad17b"; bad="#ff6b6b"; gold="#DAA520"
-        metric_val="#f2f2f2"; metric_lab="#cfcfcf"
-        formula_bg="#10351e"; formula_border="#2f8f5b"; formula_text="#e6ffef"; stripe_bg="#121723"
-        pill_bg="#1e2635"; btn_bg="#1b2332"; btn_txt="#e6e6e6"
+        # Contrasti alti
+        bg="#0b0f16"; paper="#131a24"; text="#f4f7fb"; sub="#c6cfdb"
+        accent="#66b1ff"; border="#2a3340"; good="#a7e495"; bad="#ff7a7a"; gold="#FFD166"
+        metric_val="#ffffff"; metric_lab="#d9e2ef"
+        formula_bg="#0f2a1a"; formula_border="#2f8f5b"; formula_text="#eaffee"
+        stripe_bg="#0f1320"; pill_bg="#1b2432"; btn_bg="#17202b"; btn_txt="#f4f7fb"
     else:
-        bg="#ffffff"; paper="#fafafa"; text="#222"; sub="#666"
-        accent="#0b74ff"; border="#e5e7eb"; good="#0a7f2e"; bad="#b00020"; gold="#DAA520"
-        metric_val="#111"; metric_lab="#444"
-        formula_bg="#e9f8ef"; formula_border="#b8e6c9"; formula_text="#0d5b2a"; stripe_bg="#f7f7f8"
-        pill_bg="#eef2ff"; btn_bg="#ffffff"; btn_txt="#111"
+        bg="#ffffff"; paper="#ffffff"; text="#121212"; sub="#4a4a4a"
+        accent="#0a66ff"; border="#dfe3ea"; good="#0b7c34"; bad="#c62828"; gold="#C79200"
+        metric_val="#111111"; metric_lab="#333333"
+        formula_bg="#e9f7ef"; formula_border="#b8e6c9"; formula_text="#0d5b2a"
+        stripe_bg="#f5f7fa"; pill_bg="#eef3ff"; btn_bg="#ffffff"; btn_txt="#111111"
 
     st.markdown(f"""
     <style>
@@ -64,18 +63,17 @@ def inject_theme_css(dark: bool):
       --accent:{accent}; --border:{border}; --good:{good}; --bad:{bad}; --gold:{gold};
       --metric-val:{metric_val}; --metric-lab:{metric_lab};
       --formula-bg:{formula_bg}; --formula-border:{formula_border}; --formula-text:{formula_text};
-      --stripe-bg:{stripe_bg}; --pill-bg:{pill_bg};
-      --btn-bg:{btn_bg}; --btn-txt:{btn_txt};
+      --stripe-bg:{stripe_bg}; --pill-bg:{pill_bg}; --btn-bg:{btn_bg}; --btn-txt:{btn_txt};
     }}
     .stApp {{ background-color: var(--bg); color: var(--text); }}
 
-    /* Titolo snello */
-    .v-title {{ font-weight: 800; font-size: 1.35rem; line-height: 1.2; margin: 0 0 4px 0; }}
-    .v-title .v-title-light {{ font-weight: 600; opacity: .9; }}
-    @media (max-width: 640px) {{ .v-title {{ font-size: 1.15rem; }} }}
+    /* Titolo compatto */
+    .v-title {{ font-weight: 800; font-size: 1.28rem; line-height: 1.2; margin: 0 0 6px 0; }}
+    .v-title .v-title-light {{ font-weight: 700; opacity: .9; }}
+    @media (max-width: 640px) {{ .v-title {{ font-size: 1.08rem; }} }}
 
     .v-card {{ background: var(--paper); border:1px solid var(--border);
-               border-radius:14px; padding:14px 16px; }}
+               border-radius:14px; padding:12px 14px; }}
     .v-sub {{ color: var(--sub); font-size:12px; }}
 
     .v-links {{ display:flex; gap:18px; align-items:center; flex-wrap:wrap; }}
@@ -83,7 +81,7 @@ def inject_theme_css(dark: bool):
     .v-link img {{ width:20px; height:20px; }}
 
     .pill {{ background:var(--pill-bg); padding:4px 10px; border-radius:999px;
-             border:1px solid var(--border); font-weight:600; }}
+             border:1px solid var(--border); font-weight:700; }}
 
     .btn-link {{ background:var(--btn-bg); color:var(--btn-txt) !important; border:1px solid var(--border);
                  padding:8px 12px; border-radius:10px; text-decoration:none; display:inline-block; }}
@@ -94,24 +92,23 @@ def inject_theme_css(dark: bool):
       padding: 8px 12px; display:flex; align-items:center; justify-content:space-between; gap: 10px;
       margin-bottom: 10px; flex-wrap: wrap;
     }}
-    .pct-pos {{ color: var(--good); font-weight:700; }}
-    .pct-neg {{ color: var(--bad);  font-weight:700; }}
+    .pct-pos {{ color: var(--good); font-weight:800; }}
+    .pct-neg {{ color: var(--bad);  font-weight:800; }}
 
-    .v-formula-title {{ font-size: 1.05rem; font-weight:800; margin: 6px 0 8px; }}
-    .v-formula-box {{ background: var(--formula-bg); border:1px solid var(--formula-border);
-                      border-radius:12px; padding: 12px 14px; color: var(--formula-text); }}
-    .v-formula-code {{ font-family: ui-monospace, Menlo, Consolas, monospace; font-size:15px; font-weight:700; }}
+    /* Metriche molto leggibili */
+    [data-testid="stMetric"] > div > div:nth-child(1) {{ color: var(--metric-lab) !important; font-weight:700; }}
+    [data-testid="stMetricValue"] {{ color: var(--metric-val) !important; font-weight:900; }}
 
-    /* Pulsanti Streamlit uniformi */
+    /* Pulsanti Streamlit uniformi e ben visibili */
     .stButton>button {{
       width: 100%;
       background: var(--btn-bg); color: var(--btn-txt);
       border: 1px solid var(--border); border-radius: 10px;
-      padding: 10px 14px; font-weight: 600;
+      padding: 10px 14px; font-weight: 700;
     }}
     .stButton>button:hover {{ border-color: var(--accent); }}
 
-    /* Mobile tweaks */
+    /* Mobile */
     @media (max-width: 640px) {{
       .stTabs [data-baseweb="tab-list"] {{ gap: 8px; }}
     }}
@@ -141,9 +138,8 @@ def is_it_market_open(now: datetime | None = None) -> bool:
 @st.cache_resource
 def get_gsheet_client():
     scopes = ["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"]
-    if "gcp_service_account" in st.secrets:
-        creds_dict = st.secrets["gcp_service_account"]
-    else:
+    creds_dict = st.secrets.get("gcp_service_account")
+    if not creds_dict:
         with open("service_account.json","r") as f:
             creds_dict = json.load(f)
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
@@ -185,12 +181,11 @@ def normalize_symbol(sym: str) -> str:
     s = str(sym).strip().upper()
     return s if "." in s else s + YF_SUFFIX
 
-# --- formattazioni (3 decimali per i prezzi) ---
 def fmt_it(x, dec=2):
     if x is None or (isinstance(x, float) and (np.isnan(x))): return ""
     return f"{x:,.{dec}f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# --- Prezzi ---
+# -------- Prezzi ticker --------
 @st.cache_data(ttl=PRICE_TTL, show_spinner=False)
 def price_live(symbol: str):
     try:
@@ -220,26 +215,31 @@ def get_price(symbol: str, mode: str):  # mode: live | close | auto
     if mode == "close": return price_close(symbol)
     return price_live(symbol) if is_it_market_open() else price_close(symbol)
 
-# FTSE MIB
+# -------- FTSE MIB (attuale/chiusura + % giorno) --------
 @st.cache_data(ttl=PRICE_TTL, show_spinner=False)
-def mib_quote(mode: str):
+def mib_summary():
     t = yf.Ticker(MIB_SYMBOL)
-    last = prev = None
+    live = last_close = prev_close = None
+    # close serie giornaliera
     try:
-        if mode=="live":
-            fi = getattr(t,"fast_info",None)
-            if fi:
-                last = fi.get("last_price")
-                prev = fi.get("previous_close") or fi.get("regular_market_previous_close")
-        if last is None or prev is None:
-            h = t.history(period="2d", interval="1d")
-            if not h.empty:
-                last = float(h["Close"].dropna().iloc[-1])
-                if len(h)>=2: prev = float(h["Close"].dropna().iloc[-2])
+        h = t.history(period="5d", interval="1d")
+        if not h.empty:
+            last_close = float(h["Close"].dropna().iloc[-1])
+            if len(h) >= 2:
+                prev_close = float(h["Close"].dropna().iloc[-2])
     except: pass
-    if last is None: return None, None
-    pct = None if not prev else ((float(last)-float(prev))/float(prev))*100
-    return float(last), (None if pct is None else float(pct))
+    # live
+    try:
+        fi = getattr(t,"fast_info",None)
+        if fi:
+            lp = fi.get("last_price")
+            if lp and lp>0: live = float(lp)
+        if live is None:
+            intr = t.history(period="1d", interval="1m")
+            if not intr.empty:
+                live = float(intr["Close"].dropna().iloc[-1])
+    except: pass
+    return {"live": live, "last_close": last_close, "prev_close": prev_close}
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def company_name(symbol: str) -> str:
@@ -306,6 +306,7 @@ def load_fundamentals_by_letter():
     def idx(letter): return _letter_to_index(letter) if letter else -1
     idx_t, idx_e, idx_b, idx_g = idx(TICKER_LETTER), idx(EPS_LETTER), idx(BVPS_LETTER), idx(GN_LETTER)
     idx_n, idx_i, idx_m, idx_is = idx(NAME_LETTER), idx(INV_URL_LETTER), idx(MORN_URL_LETTER), idx(ISIN_LETTER)
+
     df = pd.DataFrame({
         "Ticker_raw":[row[idx_t] if 0<=idx_t<len(row) else "" for row in data],
         "EPS_raw":[row[idx_e] if 0<=idx_e<len(row) else "" for row in data],
@@ -332,15 +333,21 @@ def load_fundamentals_by_letter():
 # ============ UI ============
 df, _ = load_fundamentals_by_letter()
 
-# --- FTSE MIB STRIPE ---
-mib_mode_default = "live" if is_it_market_open() else "close"
-mib_last, mib_pct = mib_quote(mib_mode_default)
-status = "Aperto" if mib_mode_default=="live" else "Chiuso"
-pct_html = "" if mib_pct is None else f"<span class='{'pct-pos' if mib_pct>=0 else 'pct-neg'}'>{mib_pct:+.2f}%</span>"
+# --- FTSE MIB STRIPE (attuale/chiusura) ---
+mib = mib_summary()
+open_now = is_it_market_open()
+main_val = mib["live"] if (open_now and mib["live"] is not None) else mib["last_close"]
+base = mib["prev_close"]
+pct = None if (main_val is None or base is None or base==0) else ((main_val - base)/base)*100
+status = "Aperto" if open_now else "Chiuso"
+pct_html = "" if pct is None else f"<span class='{'pct-pos' if pct>=0 else 'pct-neg'}'>{pct:+.2f}%</span>"
+sub = f"Chiusura: {fmt_it(mib['last_close'],3)} • Precedente: {fmt_it(mib['prev_close'],3)}" if mib["last_close"] and mib["prev_close"] else ""
+
 st.markdown(f"""
 <div class="stripe">
   <div class="pill">🇮🇹 FTSE MIB · {status}</div>
-  <div style="font-weight:700">{ (fmt_it(mib_last,3) if mib_last is not None else "n/d") } {pct_html}</div>
+  <div style="font-weight:900">{ (fmt_it(main_val,3) if main_val is not None else "n/d") } {pct_html}</div>
+  <div class="v-sub">{sub}</div>
   <div><a class="btn-link" href="{BORSA_LINK}" target="_blank" rel="noopener">Borsa Italiana ↗︎</a></div>
 </div>
 """, unsafe_allow_html=True)
@@ -378,7 +385,6 @@ else:
         gn_applied = gn_225(eps_val, bvps_val)
         symbol = normalize_symbol(tick)
 
-        # --- controlli refresh / origine prezzo
         c_ref1, c_ref2, c_ref3 = st.columns([1.2,1,2])
         with c_ref1:
             price_mode = st.radio("Origine prezzo", ["Auto","Intraday","Chiusura"], horizontal=True, index=0,
@@ -387,8 +393,7 @@ else:
             if st.button("🔄 Aggiorna ora"): st.cache_data.clear(); st.rerun()
         with c_ref3:
             auto = st.toggle("Auto-refresh 60s", value=False, help="Aggiorna automaticamente i prezzi")
-            if auto:
-                st_autorefresh(interval=60_000, key="auto-refresh")
+            if auto: st_autorefresh(interval=60_000, key="auto-refresh")
 
         mode = {"Auto":"auto","Intraday":"live","Chiusura":"close"}[price_mode]
         price_val = get_price(symbol, mode)
@@ -396,11 +401,10 @@ else:
 
         company = get_display_name(tick)
 
-        # --- Link con ISIN validato
+        # Link con ISIN validato (fallback ticker)
         isin_raw = str(row.get("ISIN") or "").strip().upper()
         isin = isin_raw if ISIN_REGEX.match(isin_raw) else ""
         query_key = isin if isin else tick
-
         yahoo_url = f"https://finance.yahoo.com/quote/{tick}"
         inv_url   = (row.get("InvestingURL") or "").strip() or f"https://it.investing.com/search/?q={query_key}"
         mor_url   = (row.get("MorningURL")  or "").strip() or f"https://www.morningstar.com/search?query={query_key}"
@@ -425,20 +429,17 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-        # --- Metriche (prezzi 3 decimali)
+        # Metriche (prezzi 3 decimali)
         margin_pct = (1 - (price_val/gn_sheet))*100 if (price_val is not None and gn_sheet not in (None,0)) else None
         c1,c2,c3,c4 = st.columns(4)
         with c1: st.metric(f"Prezzo ({mode_badge})", fmt_it(price_val,3) if price_val is not None else "n/d")
         with c2: st.metric("Graham#", fmt_it(gn_sheet,2) if gn_sheet is not None else "n/d")
         with c3:
-            if margin_pct is not None:
-                st.metric("Margine", fmt_it(margin_pct,2) + "%")
-            else:
-                st.metric("Margine","n/d")
+            st.metric("Margine", (fmt_it(margin_pct,2)+"%") if margin_pct is not None else "n/d")
         with c4:
             st.metric("GN (da EPS×BVPS)", fmt_it(gn_applied,2) if gn_applied is not None else "n/d")
 
-        # --- Formula
+        # Formula
         st.markdown('<div class="v-formula-title">The GN Formula (Applied)</div>', unsafe_allow_html=True)
         if gn_applied is not None:
             st.markdown(
@@ -476,14 +477,12 @@ else:
                 st.success(f"Snapshot di {len(rows_out)} titoli salvato ✅")
 
     with tab2:
-        # --- lettura + normalizzazione numeri per storicizzazione corretta
         dfh = pd.DataFrame(ws_hist.get_all_records())
         if not dfh.empty:
             dfh["Timestamp"] = pd.to_datetime(dfh["Timestamp"], errors="coerce")
             for c in ["Price","EPS","BVPS","Graham","Delta","MarginPct"]:
                 if c in dfh.columns:
                     dfh[c] = pd.to_numeric(dfh[c], errors="coerce")
-            # calcola Delta/Margin se mancanti
             mask = dfh["Delta"].isna() | dfh["MarginPct"].isna()
             if {"Price","Graham"}.issubset(dfh.columns):
                 dfh.loc[mask, "Delta"] = (dfh["Price"] - dfh["Graham"])
@@ -497,7 +496,6 @@ else:
             if not dft.empty and pd.notna(dft.iloc[-1].get("Timestamp")):
                 st.success(f"✅ Ultimo snapshot: {pd.to_datetime(dft.iloc[-1]['Timestamp']).strftime('%Y-%m-%d %H:%M:%S')}")
 
-            # filtro date
             min_day = pd.to_datetime(dft["Timestamp"]).dt.date.min()
             max_day = pd.to_datetime(dft["Timestamp"]).dt.date.max()
             start,end = st.date_input("Intervallo date", value=(min_day,max_day), min_value=min_day, max_value=max_day)
@@ -506,7 +504,6 @@ else:
                 dft = dft[(pd.to_datetime(dft["Timestamp"]).dt.date>=start) &
                           (pd.to_datetime(dft["Timestamp"]).dt.date<=end)]
 
-            # --- Dataframe formattato (prezzi 3 decimali, resto 2)
             show_cols = [c for c in ["Timestamp","Ticker","Price","EPS","BVPS","Graham","Delta","MarginPct","Fonte"] if c in dft.columns]
             disp = dft[show_cols].copy()
             if "Price" in disp:   disp["Price"]   = disp["Price"].map(lambda v: fmt_it(v,3))
@@ -515,7 +512,6 @@ else:
             if "MarginPct" in disp: disp["MarginPct"] = disp["MarginPct"].map(lambda v: (fmt_it(v,2)+"%") if pd.notnull(v) else "")
             st.dataframe(disp, use_container_width=True, hide_index=True)
 
-            # chart
             if set(["Timestamp","Price","Graham"]).issubset(dft.columns):
                 plot_df = dft[["Timestamp","Price","Graham"]].dropna().set_index("Timestamp")
                 st.line_chart(plot_df, use_container_width=True)
