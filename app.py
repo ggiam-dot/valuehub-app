@@ -19,12 +19,12 @@ FUND_TAB  = st.secrets.get("fund_tab", "Fondamentali")
 HIST_TAB  = st.secrets.get("hist_tab", "Storico")
 YF_SUFFIX = st.secrets.get("yf_suffix", ".MI")
 
-# FTSE MIB: provo più simboli in fallback
+# FTSE MIB: provo più simboli (fallback)
 MIB_SYMBOLS = [s.strip() for s in st.secrets.get(
     "mib_symbols", "^FTSEMIB,FTSEMIB.MI,FTMIB.MI,MIB.MI"
 ).split(",") if s.strip()]
 
-# 👉 link HOME Borsa Italiana (puoi sovrascrivere da Secrets)
+# 👉 link HOME Borsa Italiana (sovrascrivibile da Secrets)
 BORSA_LINK = st.secrets.get("borsa_link", "https://www.borsaitaliana.it/")
 
 # Fondamentali — lettere colonna
@@ -43,7 +43,7 @@ st.set_page_config(page_title="Vigil – Value Investment Graham Lookup",
                    page_icon="📈", layout="wide")
 
 # =========================
-# THEME & CSS (leggibilità tab/radio + badge sotto il margine)
+# THEME & CSS
 # =========================
 if "dark" not in st.session_state:
     st.session_state.dark = False
@@ -104,30 +104,33 @@ def inject_theme_css(dark: bool):
     [data-testid="stMetric"] > div > div:nth-child(1) {{ color: var(--metric-lab) !important; font-weight:700; }}
     [data-testid="stMetricValue"] {{ color: var(--metric-val) !important; font-weight:900; }}
 
-    /* Etichetta subito sotto il Margine */
+    /* Etichetta sotto il Margine – centrata e più grande */
     .badge-under-metric {{
-      font-weight: 900; font-size: 18px; line-height: 1;
-      margin-top: -6px; text-align: center;
+      font-weight: 900; font-size: 20px; line-height: 1;
+      margin-top: -4px; text-align: center;
     }}
     .badge-under-metric.good {{ color: var(--good); }}
     .badge-under-metric.bad  {{ color: var(--bad);  }}
     .badge-under-metric .gstar {{ color: var(--gold); margin-left:8px; }}
 
-    /* Pulsanti uniformi */
+    /* Pulsanti Streamlit */
     .stButton>button {{ width: 100%; background: var(--btn-bg); color: var(--btn-txt);
-        border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; font-weight: 800; }}
+        border: 1px solid var(--border); border-radius: 12px; padding: 8px 12px; font-weight: 800; }}
     .stButton>button:hover {{ border-color: var(--accent); }}
 
-    /* ✅ Testi sempre leggibili: Tab, Radio, Label */
+    /* ✅ Testi sempre leggibili: Tab, Radio, Label, Selectbox */
     .stTabs [data-baseweb="tab"] p,
     .stRadio > label, 
     .stRadio div[role="radiogroup"] label,
     .stRadio div[role="radiogroup"] label p,
     .stSelectbox > label,
-    .stDataFrame > div > div {{ color: var(--text) !important; }}
+    .stDataFrame, .stDataFrame * {{ color: var(--text) !important; }}
 
     /* Radio orizzontali ben spaziate */
     [data-baseweb="radio"] > div {{ gap: 16px; }}
+
+    /* Barra controlli (sotto select ticker) */
+    .controls-bar {{ margin: 4px 0 6px 0; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -227,7 +230,7 @@ def get_price(symbol: str, mode: str):
     if mode == "close": return price_close(symbol)
     return price_live(symbol) if is_it_market_open() else price_close(symbol)
 
-# -------- FTSE MIB robusto (fallback multipli)
+# -------- FTSE MIB (fallback multipli)
 @st.cache_data(ttl=PRICE_TTL, show_spinner=False)
 def mib_summary():
     last_close = prev_close = live = None
@@ -389,13 +392,16 @@ else:
         gn_applied = gn_225(eps_val, bvps_val)
         symbol = normalize_symbol(tick)
 
-        c_ref1, c_ref2, c_ref3 = st.columns([1.3,1,2])
-        with c_ref1:
+        # --- Barra controlli orizzontale (subito sopra le metriche)
+        st.markdown("<div class='controls-bar'></div>", unsafe_allow_html=True)
+        ctrl1, ctrl2, ctrl3 = st.columns([2.0, 0.35, 0.8])
+        with ctrl1:
             price_mode = st.radio("Origine prezzo", ["Auto","Intraday","Chiusura"], horizontal=True, index=0)
-        with c_ref2:
-            if st.button("🔄 Aggiorna ora"): st.cache_data.clear(); st.rerun()
-        with c_ref3:
-            auto = st.toggle("Auto-refresh 60s", value=False)
+        with ctrl2:
+            if st.button("↻", help="Aggiorna ora i dati del ticker"):
+                st.cache_data.clear(); st.rerun()
+        with ctrl3:
+            auto = st.toggle("Auto 60s", value=False, help="Aggiorna automaticamente i prezzi")
             if auto: st_autorefresh(interval=60_000, key="auto-refresh")
 
         mode = {"Auto":"auto","Intraday":"live","Chiusura":"close"}[price_mode]
@@ -430,7 +436,7 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-        # Metriche (badge sotto al Margine)
+        # --- Metriche (badge centrato subito sotto il Margine)
         margin_pct = (1 - (price_val/gn_sheet))*100 if (price_val is not None and gn_sheet not in (None,0)) else None
         c1,c2,c3 = st.columns(3)
         with c1: st.metric(f"Prezzo ({mode_badge})", fmt_it(price_val,3))
@@ -445,7 +451,7 @@ else:
             else:
                 st.metric("Margine", "n/d")
 
-        # Formula (senza didascalia)
+        # --- Formula (senza didascalia)
         st.markdown('<div class="v-formula-title" style="color:var(--good)">The GN Formula (Applied)</div>', unsafe_allow_html=True)
         if gn_applied is not None:
             st.markdown(
@@ -485,7 +491,6 @@ else:
 
     # ========= TAB STORICO =========
     with tab2:
-        # Pulsante per allineare header a standard
         if st.button("🧹 Normalizza intestazioni 'Storico' (A1:I1)"):
             normalize_history_headers_strict()
             st.success("Header normalizzato. Ricarico…")
