@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
-from math import sqrt
+from math import sqrt, isfinite
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
 import json, re
@@ -30,7 +30,7 @@ MORN_URL_LETTER  = st.secrets.get("morning_col_letter", "")      # es. "G"
 ISIN_LETTER      = st.secrets.get("isin_col_letter", "")         # es. "H"
 
 st.set_page_config(page_title="Vigil – Value Investment Graham Lookup",
-                   page_icon="📈", layout="centered")
+                   page_icon="📈", layout="wide")
 
 # =========================
 # THEME TOGGLE (Light/Dark) + Mobile tweaks
@@ -40,13 +40,11 @@ def inject_theme_css(dark: bool):
         bg = "#0e1117"; paper="#161a23"; text="#e6e6e6"; sub="#bdbdbd"
         accent="#4da3ff"; border="#2a2f3a"; good="#9ad17b"; bad="#ff6b6b"; gold="#DAA520"
         metric_val = "#f2f2f2"; metric_lab = "#cfcfcf"
-        # Formula verde chiaro (dark)
         formula_bg    = "#10351e"; formula_border= "#2f8f5b"; formula_text  = "#e6ffef"
     else:
         bg = "#ffffff"; paper="#fafafa"; text="#222"; sub="#666"
         accent="#0b74ff"; border="#e5e7eb"; good="#0a7f2e"; bad="#b00020"; gold="#DAA520"
         metric_val = "#111"; metric_lab = "#444"
-        # Formula verde chiaro (light)
         formula_bg    = "#e9f8ef"; formula_border= "#b8e6c9"; formula_text  = "#0d5b2a"
 
     st.markdown(
@@ -61,16 +59,13 @@ def inject_theme_css(dark: bool):
         .stApp {{ background-color: var(--bg); color: var(--text); }}
         h1, h2, h3, h4, h5, h6 {{ color: var(--text) !important; }}
         a, a * {{ color: var(--accent) !important; }}
-
         .v-card {{ background: var(--paper); border:1px solid var(--border);
                    border-radius:14px; padding:14px 16px; }}
         .v-chip-gold {{ color: var(--gold); font-weight:800; }}
         .v-sub {{ color: var(--sub); font-size:12px; }}
-
         [data-testid="stMetric"] > div > div:nth-child(1) {{ color: var(--metric-lab) !important; }}
         [data-testid="stMetricValue"] {{ color: var(--metric-val) !important; }}
         [data-testid="stMetricDelta"] {{ color: var(--metric-val) !important; }}
-
         .v-formula-title {{ font-size: 1.15rem; font-weight: 800; margin: 6px 0 8px; }}
         .v-formula-box {{
           background: var(--formula-bg);
@@ -81,17 +76,6 @@ def inject_theme_css(dark: bool):
         .v-formula-code {{
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
           font-size: 16px; font-weight: 700;
-        }}
-
-        /* Evidenzia Yahoo, attenua gli altri */
-        .v-links a.yf img {{ width:20px; height:20px; filter:none; }}
-        .v-links a.dim img {{ width:16px; height:16px; filter: grayscale(40%) opacity(0.85); }}
-
-        @media (max-width: 480px) {{
-          .stButton>button {{ padding: 12px 14px !important; border-radius: 10px !important; }}
-          .v-formula-title {{ font-size: 1.05rem; }}
-          .v-formula-code  {{ font-size: 15px; }}
-          .v-card {{ padding: 10px 12px; }}
         }}
         </style>
         """,
@@ -115,6 +99,7 @@ def get_gsheet_client():
     if "gcp_service_account" in st.secrets:
         creds_dict = st.secrets["gcp_service_account"]
     else:
+        # fallback locale opzionale (solo se hai committato il file; su Streamlit Cloud in genere NON serve)
         with open("service_account.json","r") as f:
             creds_dict = json.load(f)
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
@@ -160,24 +145,33 @@ def normalize_symbol(sym: str) -> str:
     s = str(sym).strip().upper()
     return s if "." in s else s + YF_SUFFIX
 
-@st.cache_data(show_spinner=False)
+# === Prezzo live: TTL breve per aggiornarsi davvero ===
+PRICE_TTL = int(st.secrets.get("price_ttl_seconds", 30))
+
+@st.cache_data(show_spinner=False, ttl=PRICE_TTL)
 def fetch_price_yf(symbol: str):
     try:
         t = yf.Ticker(symbol)
-        price = None
+        # fast_info
+        p = None
         fi = getattr(t, "fast_info", None)
-        if fi: price = fi.get("last_price")
-        if price is None:
-            info = t.info
-            price = info.get("regularMarketPrice") or info.get("previousClose")
-        if price is None:
-            h = t.history(period="5d")
-            if not h.empty: price = float(h["Close"].dropna().iloc[-1])
-        return float(price) if price is not None else None
+        if fi:
+            p = fi.get("last_price", None)
+            if p is not None and p > 0 and isfinite(float(p)):
+                return float(p)
+        # 1m intraday
+        h = t.history(period="1d", interval="1m")
+        if not h.empty:
+            return float(h["Close"].dropna().iloc[-1])
+        # fallback daily
+        h = t.history(period="1d")
+        if not h.empty:
+            return float(h["Close"].dropna().iloc[-1])
+        return None
     except Exception:
         return None
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=86400)
 def fetch_company_name_yf(symbol: str) -> str:
     try:
         t = yf.Ticker(symbol)
@@ -228,6 +222,27 @@ def append_history_row(ts, ticker, price, eps, bvps, graham, fonte="App"):
     ]
     ws_hist.append_row(row, value_input_option="USER_ENTERED")
 
+def append_history_bulk(ts, rows):  # rows: lista di tuple (ticker, price, eps, bvps, graham, fonte)
+    ensure_history_headers()
+    out = []
+    for ticker, price, eps, bvps, graham, fonte in rows:
+        delta = margin = None
+        if graham not in (None, "", 0) and price not in (None, ""):
+            delta  = float(price) - float(graham)
+            margin = (1 - (float(price)/float(graham))) * 100
+        out.append([
+            ts, ticker,
+            ("" if price is None else float(price)),
+            ("" if eps is None else float(eps)),
+            ("" if bvps is None else float(bvps)),
+            ("" if graham is None else float(graham)),
+            ("" if delta is None else float(delta)),
+            ("" if margin is None else float(margin)),
+            fonte
+        ])
+    if out:
+        ws_hist.append_rows(out, value_input_option="USER_ENTERED")
+
 @st.cache_data(show_spinner=False)
 def load_history():
     ensure_history_headers()
@@ -274,7 +289,7 @@ def load_fundamentals_by_letter():
         "BVPS_raw":    [row[idx_bvps]   if idx_bvps   >= 0 and idx_bvps   < len(row) else "" for row in data],
         "GN_sheet_raw":[row[idx_gn]     if idx_gn     >= 0 and idx_gn     < len(row) else "" for row in data],
     })
-    df["Name_raw"]       = [row[idx_name] if (idx_name >= 0 and idx_name < len(row)) else "" for row in data] if idx_name >= 0 else ""
+    df["Name_raw"]        = [row[idx_name] if (idx_name >= 0 and idx_name < len(row)) else "" for row in data] if idx_name >= 0 else ""
     df["InvestingURL_raw"]= [row[idx_inv]  if (idx_inv  >=0 and idx_inv  < len(row)) else "" for row in data] if idx_inv  >= 0 else ""
     df["MorningURL_raw"]  = [row[idx_morn] if (idx_morn >=0 and idx_morn < len(row)) else "" for row in data] if idx_morn >= 0 else ""
     df["ISIN_raw"]        = [row[idx_isin] if (idx_isin >=0 and idx_isin < len(row)) else "" for row in data] if idx_isin >= 0 else ""
@@ -298,7 +313,7 @@ df, meta = load_fundamentals_by_letter()
 if df.empty:
     st.warning("Nessun dato utile. Controlla il foglio.")
 else:
-    @st.cache_data(show_spinner=False)
+    @st.cache_data(show_spinner=False, ttl=86400)
     def get_display_name(tick: str) -> str:
         r = df[df["Ticker"] == tick]
         if not r.empty:
@@ -329,18 +344,17 @@ else:
         company_name = get_display_name(tick)
         isin = str(row.get("ISIN") or "").strip()
 
-        # Costruzione link
+        # Link
         yahoo_url = f"https://finance.yahoo.com/quote/{tick}"
         inv_url   = str(row.get("InvestingURL") or "").strip()
         mor_url   = str(row.get("MorningURL") or "").strip()
-        # Fallback: ricerche usando ISIN (più precisi) o ticker
         query_key = isin if isin else tick
         if not inv_url:
             inv_url = f"https://it.investing.com/search/?q={query_key}"
         if not mor_url:
             mor_url = f"https://www.morningstar.com/search?query={query_key}"
 
-        # Header con icone (Yahoo più evidente)
+        # Header
         st.markdown(
             f"""
             <div class="v-card" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -364,6 +378,15 @@ else:
             unsafe_allow_html=True
         )
 
+        # Controlli refresh
+        r1, r2 = st.columns([1,3])
+        with r1:
+            if st.button("🔄 Aggiorna ora"):
+                st.cache_data.clear()
+                st.rerun()
+        with r2:
+            st.caption(f"Aggiornamento prezzo con TTL **{PRICE_TTL}s** (evita rate-limit Yahoo).")
+
         # Metriche
         margin_pct = (1 - (price_live/gn_sheet))*100 if (price_live is not None and gn_sheet not in (None,0)) else None
         c1, c2, c3 = st.columns(3)
@@ -372,35 +395,16 @@ else:
         with c3:
             if margin_pct is not None:
                 pct = f"{margin_pct:.2f}%"
-                if margin_pct > 33:
-                    html = f"""
-                    <div style="text-align:center;">
-                      <div style="font-weight:800; font-size:20px; color:var(--good);">{pct}</div>
-                      <div style="margin-top:4px; font-weight:700; color:var(--good); display:inline-flex; align-items:center; gap:6px;">
-                        <span>Sottovalutata</span>
-                        <span style="display:inline-flex; align-items:center; line-height:1;">
-                          <span class="v-chip-gold">⭐</span>
-                          <span class="v-chip-gold" style="margin-left:-10px;">G</span>
-                        </span>
-                      </div>
-                    </div>"""
-                elif margin_pct > 0:
-                    html = f"""
-                    <div style="text-align:center;">
-                      <div style="font-weight:800; font-size:20px; color:var(--good);">{pct}</div>
-                      <div style="margin-top:4px; font-weight:700; color:var(--good);">Sottovalutata</div>
-                    </div>"""
-                else:
-                    html = f"""
-                    <div style="text-align:center;">
-                      <div style="font-weight:800; font-size:20px; color:var(--bad);">{pct}</div>
-                      <div style="margin-top:4px; font-weight:700; color:var(--bad);">Sopravvalutata</div>
-                    </div>"""
+                html = (
+                    f"<div style='text-align:center;'><div style='font-weight:800; font-size:20px; color:var(--good);'>{pct}</div>"
+                    f"<div style='margin-top:4px; font-weight:700; color:{'var(--good)' if margin_pct>0 else 'var(--bad)'};'>"
+                    f"{'Sottovalutata' if margin_pct>0 else 'Sopravvalutata'}</div></div>"
+                )
                 st.markdown(html, unsafe_allow_html=True)
             else:
                 st.metric("Margine", "n/d")
 
-        # Formula applicata (verde chiaro)
+        # Formula applicata
         st.markdown('<div class="v-formula-title">The GN Formula (Applied)</div>', unsafe_allow_html=True)
         if gn_applied is not None:
             st.markdown(
@@ -422,7 +426,7 @@ else:
                              help="Mostra/nasconde i comandi di amministrazione")
 
         if is_admin:
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
                 if st.button("🔄 Aggiorna dal foglio", use_container_width=True):
                     st.cache_data.clear(); st.rerun()
@@ -441,6 +445,18 @@ else:
                     now_str = datetime.now(ZoneInfo("Europe/Rome")).strftime("%Y-%m-%d %H:%M:%S")
                     append_history_row(now_str, tick, price_live, eps_val, bvps_val, gn_sheet, "App (GN da Sheet)")
                     st.success("Snapshot salvato nello Storico.")
+            with col4:
+                if st.button("🗂️ Snapshot TUTTI i titoli", use_container_width=True):
+                    now_str = datetime.now(ZoneInfo("Europe/Rome")).strftime("%Y-%m-%d %H:%M:%S")
+                    rows_out = []
+                    for _, r in df.iterrows():
+                        tck = str(r["Ticker"]).strip().upper()
+                        if not tck: continue
+                        px = fetch_price_yf(normalize_symbol(tck))
+                        eps_i, bvps_i, gn_i = r["EPS"], r["BVPS"], r["GN_sheet"]
+                        rows_out.append((tck, px, eps_i, bvps_i, gn_i, "App (bulk)"))
+                    append_history_bulk(now_str, rows_out)
+                    st.success(f"Snapshot di {len(rows_out)} titoli salvato ✅")
 
     with tab2:
         dfh = load_history()
@@ -476,8 +492,6 @@ else:
                 if ("Price" in dft.columns) and ("Graham" in dft.columns):
                     plot_df = dft[["Timestamp","Price","Graham"]].dropna().set_index("Timestamp")
                     st.line_chart(plot_df, use_container_width=True)
+        else:
+            st.info("La tab Storico è vuota.")
 
-        if 'is_admin' in locals() and is_admin:
-            st.markdown("---")
-            with st.expander("🔎 Debug"):
-                st.write(df.head())
