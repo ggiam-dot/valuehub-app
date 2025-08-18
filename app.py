@@ -5,20 +5,19 @@ import yfinance as yf
 from math import sqrt, isfinite
 from datetime import datetime, date, time as dtime
 from zoneinfo import ZoneInfo
-import json, re
+import json, re, time
 
 import gspread
 from google.oauth2.service_account import Credentials
 from streamlit_autorefresh import st_autorefresh
 
-# =========================
-# CONFIG (da Secrets)
-# =========================
+# ====== CONFIG (Secrets) ======
 SHEET_ID  = st.secrets.get("google_sheet_id")
 FUND_TAB  = st.secrets.get("fund_tab", "Fondamentali")
 HIST_TAB  = st.secrets.get("hist_tab", "Storico")
 YF_SUFFIX = st.secrets.get("yf_suffix", ".MI")
-MIB_SYMBOL = st.secrets.get("mib_symbol", "^FTSEMIB")
+# puoi mettere più simboli separati da virgola: "^FTSEMIB,MIB.MI"
+MIB_SYMBOLS = [s.strip() for s in st.secrets.get("mib_symbols", "^FTSEMIB,MIB.MI").split(",") if s.strip()]
 BORSA_LINK = st.secrets.get("borsa_link", "https://www.borsaitaliana.it/borsa/indice/ftse-mib/dettaglio.html")
 
 TICKER_LETTER = st.secrets.get("ticker_col_letter", "A")
@@ -32,30 +31,25 @@ ISIN_LETTER   = st.secrets.get("isin_col_letter", "")
 
 PRICE_TTL = int(st.secrets.get("price_ttl_seconds", 30))
 
-st.set_page_config(page_title="Vigil – Value Investment Graham Lookup",
-                   page_icon="📈", layout="wide")
+st.set_page_config(page_title="Vigil – Value Investment Graham Lookup", page_icon="📈", layout="wide")
 
-# =========================
-# THEME & CSS (alta leggibilità + mobile)
-# =========================
+# ====== THEME & CSS ======
 if "dark" not in st.session_state:
     st.session_state.dark = False
 
 def inject_theme_css(dark: bool):
     if dark:
-        # Contrasto alto
         bg="#0b0f16"; paper="#131a24"; text="#f3f7fb"; sub="#c6cfdb"
-        accent="#66b1ff"; border="#2a3340"; good="#90d988"; bad="#ff7a7a"; gold="#FFD166"
+        accent="#66b1ff"; border="#2a3340"; good="#0abf53"; bad="#ff4d4f"; gold="#FFD166"
         metric_val="#ffffff"; metric_lab="#d9e2ef"
         formula_bg="#0f2a1a"; formula_border="#2f8f5b"; formula_text="#eaffee"
         stripe_bg="#0f1320"; pill_bg="#1b2432"; btn_bg="#17202b"; btn_txt="#f3f7fb"
     else:
         bg="#ffffff"; paper="#ffffff"; text="#151515"; sub="#4a4a4a"
-        accent="#0a66ff"; border="#dfe3ea"; good="#0b7c34"; bad="#c62828"; gold="#C79200"
+        accent="#0a66ff"; border="#dfe3ea"; good="#0a7f2e"; bad="#c62828"; gold="#C79200"
         metric_val="#111111"; metric_lab="#333333"
         formula_bg="#e9f7ef"; formula_border="#b8e6c9"; formula_text="#0d5b2a"
         stripe_bg="#f5f7fa"; pill_bg="#eef3ff"; btn_bg="#ffffff"; btn_txt="#151515"
-
     st.markdown(f"""
     <style>
     :root {{
@@ -66,66 +60,43 @@ def inject_theme_css(dark: bool):
       --stripe-bg:{stripe_bg}; --pill-bg:{pill_bg}; --btn-bg:{btn_bg}; --btn-txt:{btn_txt};
     }}
     .stApp {{ background-color: var(--bg); color: var(--text); }}
-
-    /* Titolo compatto e un filo più grande */
     .v-title {{ font-weight: 800; font-size: 1.36rem; line-height: 1.2; margin: 0 0 8px 0; }}
     .v-title .v-title-light {{ font-weight: 700; opacity: .9; }}
     @media (max-width: 640px) {{ .v-title {{ font-size: 1.16rem; }} }}
-
-    .v-card {{ background: var(--paper); border:1px solid var(--border);
-               border-radius:14px; padding:12px 14px; }}
+    .v-card {{ background: var(--paper); border:1px solid var(--border); border-radius:14px; padding:12px 14px; }}
     .v-sub {{ color: var(--sub); font-size:12px; }}
-
     .v-links {{ display:flex; gap:18px; align-items:center; flex-wrap:wrap; }}
     .v-link {{ display:flex; gap:8px; align-items:center; font-size:14px; }}
     .v-link img {{ width:20px; height:20px; }}
-
-    .pill {{ background:var(--pill-bg); padding:6px 12px; border-radius:999px;
-             border:1px solid var(--border); font-weight:800; }}
-
+    .pill {{ background:var(--pill-bg); padding:6px 12px; border-radius:999px; border:1px solid var(--border); font-weight:800; }}
     .btn-link {{ background:var(--btn-bg); color:var(--btn-txt) !important; border:1px solid var(--border);
                  padding:8px 12px; border-radius:12px; text-decoration:none; display:inline-block; font-weight:700; }}
     .btn-link:hover {{ border-color:var(--accent); }}
-
-    .stripe {{
-      background: var(--stripe-bg); border: 1px solid var(--border); border-radius: 12px;
-      padding: 10px 12px; display:flex; align-items:center; justify-content:space-between; gap: 10px;
-      margin-bottom: 12px; flex-wrap: wrap;
-    }}
+    .stripe {{ background: var(--stripe-bg); border: 1px solid var(--border); border-radius: 12px;
+               padding: 10px 12px; display:flex; align-items:center; justify-content:space-between; gap: 10px;
+               margin-bottom: 12px; flex-wrap: wrap; }}
     .pct-pos {{ color: var(--good); font-weight:900; }}
     .pct-neg {{ color: var(--bad);  font-weight:900; }}
-
-    /* Metriche leggibili */
     [data-testid="stMetric"] > div > div:nth-child(1) {{ color: var(--metric-lab) !important; font-weight:700; }}
     [data-testid="stMetricValue"] {{ color: var(--metric-val) !important; font-weight:900; }}
-
-    /* Pulsanti uniformi */
-    .stButton>button {{
-      width: 100%;
-      background: var(--btn-bg); color: var(--btn-txt);
-      border: 1px solid var(--border); border-radius: 12px;
-      padding: 10px 14px; font-weight: 800;
-    }}
+    .stButton>button {{ width: 100%; background: var(--btn-bg); color: var(--btn-txt);
+        border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; font-weight: 800; }}
     .stButton>button:hover {{ border-color: var(--accent); }}
-
-    /* Radio più distanziate */
-    [data-baseweb="radio"] > div {{ gap: 14px; }}
+    .badge {{ font-weight:800; margin-top:4px; }}
+    .badge.good {{ color: var(--good); }}
+    .badge.bad  {{ color: var(--bad);  }}
+    .gstar {{ color: var(--gold); font-weight:900; margin-left:6px; }}
     </style>
     """, unsafe_allow_html=True)
 
 header_l, header_r = st.columns([4,1], vertical_alignment="center")
 with header_l:
-    st.markdown(
-        "<div class='v-title'>📈 Vigil – Value Investment Graham <span class='v-title-light'>(Intelligent)</span> Lookup</div>",
-        unsafe_allow_html=True
-    )
+    st.markdown("<div class='v-title'>📈 Vigil – Value Investment Graham <span class='v-title-light'>(Intelligent)</span> Lookup</div>", unsafe_allow_html=True)
 with header_r:
-    st.session_state.dark = st.toggle("🌙", value=st.session_state.dark, help="Light/Dark mode", label_visibility="collapsed")
+    st.session_state.dark = st.toggle("Tema scuro", value=st.session_state.dark)
 inject_theme_css(st.session_state.dark)
 
-# =========================
-# MARKET TIME / GOOGLE AUTH
-# =========================
+# ====== MARKET TIME / AUTH ======
 ROME = ZoneInfo("Europe/Rome")
 def is_it_market_open(now: datetime | None = None) -> bool:
     now = now or datetime.now(ROME)
@@ -138,8 +109,7 @@ def get_gsheet_client():
     scopes = ["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"]
     creds_dict = st.secrets.get("gcp_service_account")
     if not creds_dict:
-        with open("service_account.json","r") as f:
-            creds_dict = json.load(f)
+        with open("service_account.json","r") as f: creds_dict = json.load(f)
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     return gspread.authorize(creds)
 
@@ -148,11 +118,8 @@ sh = gc.open_by_key(SHEET_ID)
 ws_fund = sh.worksheet(FUND_TAB)
 ws_hist = sh.worksheet(HIST_TAB)
 
-# =========================
-# UTILS
-# =========================
+# ====== UTILS ======
 ISIN_REGEX = re.compile(r"^[A-Z]{2}[A-Z0-9]{10}$")
-
 def _letter_to_index(letter: str) -> int:
     if not letter: return -1
     s = letter.strip().upper(); n = 0
@@ -180,10 +147,10 @@ def normalize_symbol(sym: str) -> str:
     return s if "." in s else s + YF_SUFFIX
 
 def fmt_it(x, dec=2):
-    if x is None or (isinstance(x, float) and (np.isnan(x))): return ""
+    if x is None or (isinstance(x, float) and (np.isnan(x))): return "n/d" if dec==3 else ""
     return f"{x:,.{dec}f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# -------- Prezzi ticker --------
+# --- Prezzi ticker
 @st.cache_data(ttl=PRICE_TTL, show_spinner=False)
 def price_live(symbol: str):
     try:
@@ -208,35 +175,34 @@ def price_close(symbol: str):
     except: pass
     return None
 
-def get_price(symbol: str, mode: str):  # mode: live | close | auto
+def get_price(symbol: str, mode: str):
     if mode == "live":  return price_live(symbol)
     if mode == "close": return price_close(symbol)
     return price_live(symbol) if is_it_market_open() else price_close(symbol)
 
-# -------- FTSE MIB (robusto: attuale, ultima chiusura, precedente) --------
+# --- FTSE MIB robusto (fallback multipli)
 @st.cache_data(ttl=PRICE_TTL, show_spinner=False)
 def mib_summary():
-    t = yf.Ticker(MIB_SYMBOL)
-    live = last_close = prev_close = None
-    try:
-        # chiusure: prendi le ultime 2 valide (no NaN)
-        h = t.history(period="10d", interval="1d")
-        closes = h["Close"].dropna()
-        if not closes.empty:
-            last_close = float(closes.iloc[-1])
-            if len(closes) >= 2:
-                prev_close = float(closes.iloc[-2])
-    except: pass
-    try:
-        fi = getattr(t,"fast_info",None)
-        if fi:
-            lp = fi.get("last_price")
-            if lp and lp>0: live = float(lp)
-        if live is None:
-            intr = t.history(period="1d", interval="1m")
-            if not intr.empty:
-                live = float(intr["Close"].dropna().iloc[-1])
-    except: pass
+    last_close = prev_close = live = None
+    # prendi chiusure da uno dei simboli disponibili
+    for sym in MIB_SYMBOLS:
+        try:
+            t = yf.Ticker(sym)
+            h = t.history(period="10d", interval="1d")["Close"].dropna()
+            if len(h) >= 1 and last_close is None: last_close = float(h.iloc[-1])
+            if len(h) >= 2 and prev_close is None: prev_close = float(h.iloc[-2])
+        except: pass
+    # live
+    for sym in MIB_SYMBOLS:
+        try:
+            t = yf.Ticker(sym)
+            fi = getattr(t,"fast_info",None)
+            if fi:
+                lp = fi.get("last_price")
+                if lp and lp>0: live = float(lp); break
+            intr = t.history(period="1d", interval="1m")["Close"].dropna()
+            if len(intr) > 0: live = float(intr.iloc[-1]); break
+        except: pass
     return {"live": live, "last_close": last_close, "prev_close": prev_close}
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -250,8 +216,8 @@ def gn_225(eps,bvps):
     if eps and bvps and eps>0 and bvps>0: return sqrt(22.5*eps*bvps)
     return None
 
+# ====== HISTORY helpers ======
 DESIRED_HIST_HEADER = ["Timestamp","Ticker","Price","EPS","BVPS","Graham","Delta","MarginPct","Fonte"]
-
 def ensure_history_headers():
     values = ws_hist.get_all_values()
     if not values:
@@ -260,6 +226,11 @@ def ensure_history_headers():
     for col in DESIRED_HIST_HEADER:
         if col not in header: header.append(col); changed=True
     if changed: ws_hist.update("A1:I1", [header], value_input_option="USER_ENTERED")
+
+# ricarica dallo sheet ogni 60s (così vedi gli snapshot del workflow)
+@st.cache_data(ttl=60, show_spinner=False)
+def load_history_records():
+    return ws_hist.get_all_records()
 
 def append_history_row(ts, ticker, price, eps, bvps, graham, fonte="App"):
     ensure_history_headers()
@@ -277,25 +248,7 @@ def append_history_row(ts, ticker, price, eps, bvps, graham, fonte="App"):
            fonte]
     ws_hist.append_row(row, value_input_option="USER_ENTERED")
 
-def append_history_bulk(ts, rows):
-    ensure_history_headers()
-    out=[]
-    for ticker, price, eps, bvps, graham, fonte in rows:
-        delta=margin=None
-        if graham not in (None,"",0) and price not in (None,""):
-            delta = float(price) - float(graham)
-            margin = (1 - (float(price)/float(graham)))*100
-        out.append([ts, ticker,
-                    ("" if price is None else float(price)),
-                    ("" if eps is None else float(eps)),
-                    ("" if bvps is None else float(bvps)),
-                    ("" if graham is None else float(graham)),
-                    ("" if delta is None else float(delta)),
-                    ("" if margin is None else float(margin)),
-                    fonte])
-    if out: ws_hist.append_rows(out, value_input_option="USER_ENTERED")
-
-# ============ LOAD FUNDAMENTALS ============
+# ====== LOAD FUNDAMENTALS ======
 @st.cache_data(show_spinner=False)
 def load_fundamentals_by_letter():
     values = ws_fund.get_all_values()
@@ -304,7 +257,6 @@ def load_fundamentals_by_letter():
     def idx(letter): return _letter_to_index(letter) if letter else -1
     idx_t, idx_e, idx_b, idx_g = idx(TICKER_LETTER), idx(EPS_LETTER), idx(BVPS_LETTER), idx(GN_LETTER)
     idx_n, idx_i, idx_m, idx_is = idx(NAME_LETTER), idx(INV_URL_LETTER), idx(MORN_URL_LETTER), idx(ISIN_LETTER)
-
     df = pd.DataFrame({
         "Ticker_raw":[row[idx_t] if 0<=idx_t<len(row) else "" for row in data],
         "EPS_raw":[row[idx_e] if 0<=idx_e<len(row) else "" for row in data],
@@ -315,7 +267,6 @@ def load_fundamentals_by_letter():
     df["InvestingURL_raw"]= [row[idx_i]  if 0<=idx_i <len(row) else "" for row in data] if idx_i  >=0 else ""
     df["MorningURL_raw"]  = [row[idx_m]  if 0<=idx_m <len(row) else "" for row in data] if idx_m  >=0 else ""
     df["ISIN_raw"]        = [row[idx_is] if 0<=idx_is<len(row) else "" for row in data] if idx_is>=0 else ""
-
     df = df[(df["Ticker_raw"].astype(str).str.strip()!="")].reset_index(drop=True)
     df["Ticker"]   = df["Ticker_raw"].astype(str).str.strip().str.upper()
     df["EPS"]      = df["EPS_raw"].apply(to_number)
@@ -325,13 +276,12 @@ def load_fundamentals_by_letter():
     df["InvestingURL"] = (df["InvestingURL_raw"].astype(str).str.strip() if isinstance(df["InvestingURL_raw"], pd.Series) else "")
     df["MorningURL"]   = (df["MorningURL_raw"].astype(str).str.strip() if isinstance(df["MorningURL_raw"], pd.Series) else "")
     df["ISIN"]         = (df["ISIN_raw"].astype(str).str.strip() if isinstance(df["ISIN_raw"], pd.Series) else "")
-
     return df, {}
 
-# ============ UI ============
+# ====== UI ======
 df, _ = load_fundamentals_by_letter()
 
-# --- FTSE MIB STRIPE ---
+# FTSE MIB stripe
 mib = mib_summary()
 open_now = is_it_market_open()
 main_val = mib["live"] if (open_now and mib["live"] is not None) else mib["last_close"]
@@ -344,7 +294,7 @@ sub = f"Ultima chiusura: {fmt_it(mib['last_close'],3)} • Precedente: {fmt_it(m
 st.markdown(f"""
 <div class="stripe">
   <div class="pill">🇮🇹 FTSE MIB · {status}</div>
-  <div style="font-weight:900">{ (fmt_it(main_val,3) if main_val is not None else "n/d") } {pct_html}</div>
+  <div style="font-weight:900">{ fmt_it(main_val,3) } {pct_html}</div>
   <div class="v-sub">{sub}</div>
   <div><a class="btn-link" href="{BORSA_LINK}" target="_blank" rel="noopener">Borsa Italiana ↗︎</a></div>
 </div>
@@ -383,23 +333,20 @@ else:
         gn_applied = gn_225(eps_val, bvps_val)
         symbol = normalize_symbol(tick)
 
-        c_ref1, c_ref2, c_ref3 = st.columns([1.2,1,2])
+        c_ref1, c_ref2, c_ref3 = st.columns([1.3,1,2])
         with c_ref1:
-            price_mode = st.radio("Origine prezzo", ["Auto","Intraday","Chiusura"], horizontal=True, index=0,
-                                  help="Auto: intraday in orario di mercato, altrimenti chiusura precedente")
+            price_mode = st.radio("Origine prezzo", ["Auto","Intraday","Chiusura"], horizontal=True, index=0)
         with c_ref2:
             if st.button("🔄 Aggiorna ora"): st.cache_data.clear(); st.rerun()
         with c_ref3:
-            auto = st.toggle("Auto-refresh 60s", value=False, help="Aggiorna automaticamente i prezzi")
+            auto = st.toggle("Auto-refresh 60s", value=False)
             if auto: st_autorefresh(interval=60_000, key="auto-refresh")
 
         mode = {"Auto":"auto","Intraday":"live","Chiusura":"close"}[price_mode]
         price_val = get_price(symbol, mode)
         mode_badge = {"auto":"Auto","live":"Intraday","close":"Chiusura"}[mode]
 
-        company = get_display_name(tick)
-
-        # Link con ISIN validato
+        # Link con ISIN valido
         isin_raw = str(row.get("ISIN") or "").strip().upper()
         isin = isin_raw if ISIN_REGEX.match(isin_raw) else ""
         query_key = isin if isin else tick
@@ -410,7 +357,7 @@ else:
         st.markdown(f"""
         <div class="v-card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
           <div>
-            <h3 style="margin:0">{tick} — {company}</h3>
+            <h3 style="margin:0">{tick} — {get_display_name(tick)}</h3>
             {"<div class='v-sub'>ISIN: "+isin+"</div>" if isin else ""}
           </div>
           <div class="v-links">
@@ -427,43 +374,48 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-        # Metriche: 3 colonne
+        # Metriche
         margin_pct = (1 - (price_val/gn_sheet))*100 if (price_val is not None and gn_sheet not in (None,0)) else None
         c1,c2,c3 = st.columns(3)
-        with c1: st.metric(f"Prezzo ({mode_badge})", fmt_it(price_val,3) if price_val is not None else "n/d")
+        with c1: st.metric(f"Prezzo ({mode_badge})", fmt_it(price_val,3))
         with c2: st.metric("Graham#", fmt_it(gn_sheet,2) if gn_sheet is not None else "n/d")
-        with c3: st.metric("Margine", (fmt_it(margin_pct,2)+"%") if margin_pct is not None else "n/d")
+        if margin_pct is not None:
+            with c3: st.metric("Margine", fmt_it(margin_pct,2) + "%")
+            # Etichetta sotto le metriche
+            msg = "Sottovalutata" if margin_pct > 0 else "Sopravvalutata"
+            css = "good" if margin_pct > 0 else "bad"
+            star = " <span class='gstar'>⭐G</span>" if margin_pct >= 33 else ""
+            st.markdown(f"<div class='badge {css}' style='text-align:right'>{msg}{star}</div>", unsafe_allow_html=True)
+        else:
+            with c3: st.metric("Margine", "n/d")
 
-        # Formula – grande e verde + formula generica
+        # Formula (senza riga esplicativa)
         st.markdown('<div class="v-formula-title" style="color:var(--good)">The GN Formula (Applied)</div>', unsafe_allow_html=True)
         if gn_applied is not None:
             st.markdown(
-                f"<div class='v-formula-box'><div class='v-formula-code' style='font-size:17px;'>√(22.5 × {eps_val:.4f} × {bvps_val:.4f}) = {gn_applied:.4f}</div><div class='v-sub'>Formula generale: √(22.5 × EPS × BVPS). EPS e BVPS dal foglio; coefficiente 22.5 (Graham).</div></div>",
+                f"<div class='v-formula-box'><div class='v-formula-code' style='font-size:17px;'>√(22.5 × {eps_val:.4f} × {bvps_val:.4f}) = {gn_applied:.4f}</div></div>",
                 unsafe_allow_html=True
             )
         else:
-            st.markdown(
-                "<div class='v-formula-box'><div class='v-formula-code'>√(22.5 × EPS × BVPS)</div><div class='v-sub'>Servono EPS e BVPS > 0 per calcolare il numero di Graham.</div></div>",
-                unsafe_allow_html=True
-            )
+            st.markdown("<div class='v-formula-box'><div class='v-formula-code'>√(22.5 × EPS × BVPS)</div></div>", unsafe_allow_html=True)
 
         st.markdown("---")
-        is_admin = st.toggle("🛠️ Modalità amministratore", value=True, help="Comandi di scrittura sul foglio")
+        is_admin = st.toggle("🛠️ Modalità amministratore", value=True)
         if is_admin:
             col1,col2,col3,col4 = st.columns(4)
-            if col1.button("🔄 Aggiorna dal foglio", use_container_width=True):
+            if col1.button("Aggiorna dal foglio", use_container_width=True):
                 st.cache_data.clear(); st.rerun()
-            if col2.button("✍️ Riscrivi Graham# su Sheet", use_container_width=True):
+            if col2.button("Riscrivi Graham# su Sheet", use_container_width=True):
                 gn_series = df.apply(lambda r: gn_225(r["EPS"], r["BVPS"]), axis=1)
                 out = [[("" if (v is None or pd.isna(v)) else float(v))] for v in gn_series]
                 start_row = 2; end_row = start_row + len(out) - 1
                 ws_fund.update(f"{GN_LETTER}{start_row}:{GN_LETTER}{end_row}", out, value_input_option="USER_ENTERED")
-                st.success("Colonna Graham# aggiornata (22.5×EPS×BVPS)."); st.cache_data.clear(); st.rerun()
-            if col3.button("💾 Salva snapshot", use_container_width=True):
+                st.success("Graham# aggiornato."); st.cache_data.clear(); st.rerun()
+            if col3.button("Salva snapshot", use_container_width=True):
                 now_str = datetime.now(ROME).strftime("%Y-%m-%d %H:%M:%S")
                 append_history_row(now_str, tick, price_val, eps_val, bvps_val, gn_sheet, f"App ({mode_badge})")
                 st.success("Snapshot salvato.")
-            if col4.button("🗂️ Snapshot TUTTI i titoli", use_container_width=True):
+            if col4.button("Snapshot TUTTI", use_container_width=True):
                 now_str = datetime.now(ROME).strftime("%Y-%m-%d %H:%M:%S")
                 rows_out=[]
                 for _,r in df.iterrows():
@@ -471,16 +423,17 @@ else:
                     if not tck: continue
                     px = get_price(normalize_symbol(tck), mode)
                     rows_out.append((tck, px, r["EPS"], r["BVPS"], r["GN_sheet"], f"App ({mode_badge})"))
-                append_history_bulk(now_str, rows_out)
+                # append bulk semplice (per limitare traffico fai chunk se serve)
+                for rr in rows_out:
+                    append_history_row(now_str, *rr)
                 st.success(f"Snapshot di {len(rows_out)} titoli salvato ✅")
 
     with tab2:
-        dfh = pd.DataFrame(ws_hist.get_all_records())
+        dfh = pd.DataFrame(load_history_records())
         if not dfh.empty:
             dfh["Timestamp"] = pd.to_datetime(dfh["Timestamp"], errors="coerce")
             for c in ["Price","EPS","BVPS","Graham","Delta","MarginPct"]:
-                if c in dfh.columns:
-                    dfh[c] = pd.to_numeric(dfh[c], errors="coerce")
+                if c in dfh.columns: dfh[c] = pd.to_numeric(dfh[c], errors="coerce")
             mask = dfh["Delta"].isna() | dfh["MarginPct"].isna()
             if {"Price","Graham"}.issubset(dfh.columns):
                 dfh.loc[mask, "Delta"] = (dfh["Price"] - dfh["Graham"])
