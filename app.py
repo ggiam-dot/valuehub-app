@@ -5,21 +5,29 @@ import yfinance as yf
 from math import sqrt, isfinite
 from datetime import datetime, date, time as dtime
 from zoneinfo import ZoneInfo
-import json, re, time
+import json, re
 
 import gspread
 from google.oauth2.service_account import Credentials
 from streamlit_autorefresh import st_autorefresh
 
-# ====== CONFIG (Secrets) ======
+# =========================
+# CONFIG (Secrets)
+# =========================
 SHEET_ID  = st.secrets.get("google_sheet_id")
 FUND_TAB  = st.secrets.get("fund_tab", "Fondamentali")
 HIST_TAB  = st.secrets.get("hist_tab", "Storico")
 YF_SUFFIX = st.secrets.get("yf_suffix", ".MI")
-# puoi mettere più simboli separati da virgola: "^FTSEMIB,MIB.MI"
-MIB_SYMBOLS = [s.strip() for s in st.secrets.get("mib_symbols", "^FTSEMIB,MIB.MI").split(",") if s.strip()]
-BORSA_LINK = st.secrets.get("borsa_link", "https://www.borsaitaliana.it/borsa/indice/ftse-mib/dettaglio.html")
 
+# FTSE MIB: provo più simboli in fallback
+MIB_SYMBOLS = [s.strip() for s in st.secrets.get(
+    "mib_symbols", "^FTSEMIB,FTSEMIB.MI,FTMIB.MI,MIB.MI"
+).split(",") if s.strip()]
+
+# 👉 link HOME Borsa Italiana (puoi sovrascrivere da Secrets)
+BORSA_LINK = st.secrets.get("borsa_link", "https://www.borsaitaliana.it/")
+
+# Fondamentali — lettere colonna
 TICKER_LETTER = st.secrets.get("ticker_col_letter", "A")
 EPS_LETTER    = st.secrets.get("eps_col_letter", "B")
 BVPS_LETTER   = st.secrets.get("bvps_col_letter", "C")
@@ -31,9 +39,12 @@ ISIN_LETTER   = st.secrets.get("isin_col_letter", "")
 
 PRICE_TTL = int(st.secrets.get("price_ttl_seconds", 30))
 
-st.set_page_config(page_title="Vigil – Value Investment Graham Lookup", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Vigil – Value Investment Graham Lookup",
+                   page_icon="📈", layout="wide")
 
-# ====== THEME & CSS ======
+# =========================
+# THEME & CSS
+# =========================
 if "dark" not in st.session_state:
     st.session_state.dark = False
 
@@ -50,6 +61,7 @@ def inject_theme_css(dark: bool):
         metric_val="#111111"; metric_lab="#333333"
         formula_bg="#e9f7ef"; formula_border="#b8e6c9"; formula_text="#0d5b2a"
         stripe_bg="#f5f7fa"; pill_bg="#eef3ff"; btn_bg="#ffffff"; btn_txt="#151515"
+
     st.markdown(f"""
     <style>
     :root {{
@@ -60,28 +72,41 @@ def inject_theme_css(dark: bool):
       --stripe-bg:{stripe_bg}; --pill-bg:{pill_bg}; --btn-bg:{btn_bg}; --btn-txt:{btn_txt};
     }}
     .stApp {{ background-color: var(--bg); color: var(--text); }}
+
     .v-title {{ font-weight: 800; font-size: 1.36rem; line-height: 1.2; margin: 0 0 8px 0; }}
     .v-title .v-title-light {{ font-weight: 700; opacity: .9; }}
     @media (max-width: 640px) {{ .v-title {{ font-size: 1.16rem; }} }}
-    .v-card {{ background: var(--paper); border:1px solid var(--border); border-radius:14px; padding:12px 14px; }}
+
+    .v-card {{ background: var(--paper); border:1px solid var(--border);
+               border-radius:14px; padding:12px 14px; }}
     .v-sub {{ color: var(--sub); font-size:12px; }}
+
     .v-links {{ display:flex; gap:18px; align-items:center; flex-wrap:wrap; }}
     .v-link {{ display:flex; gap:8px; align-items:center; font-size:14px; }}
     .v-link img {{ width:20px; height:20px; }}
-    .pill {{ background:var(--pill-bg); padding:6px 12px; border-radius:999px; border:1px solid var(--border); font-weight:800; }}
+
+    .pill {{ background:var(--pill-bg); padding:6px 12px; border-radius:999px;
+             border:1px solid var(--border); font-weight:800; }}
+
     .btn-link {{ background:var(--btn-bg); color:var(--btn-txt) !important; border:1px solid var(--border);
                  padding:8px 12px; border-radius:12px; text-decoration:none; display:inline-block; font-weight:700; }}
     .btn-link:hover {{ border-color:var(--accent); }}
-    .stripe {{ background: var(--stripe-bg); border: 1px solid var(--border); border-radius: 12px;
-               padding: 10px 12px; display:flex; align-items:center; justify-content:space-between; gap: 10px;
-               margin-bottom: 12px; flex-wrap: wrap; }}
+
+    .stripe {{
+      background: var(--stripe-bg); border: 1px solid var(--border); border-radius: 12px;
+      padding: 10px 12px; display:flex; align-items:center; justify-content:space-between; gap: 10px;
+      margin-bottom: 12px; flex-wrap: wrap;
+    }}
     .pct-pos {{ color: var(--good); font-weight:900; }}
     .pct-neg {{ color: var(--bad);  font-weight:900; }}
+
     [data-testid="stMetric"] > div > div:nth-child(1) {{ color: var(--metric-lab) !important; font-weight:700; }}
     [data-testid="stMetricValue"] {{ color: var(--metric-val) !important; font-weight:900; }}
+
     .stButton>button {{ width: 100%; background: var(--btn-bg); color: var(--btn-txt);
         border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; font-weight: 800; }}
     .stButton>button:hover {{ border-color: var(--accent); }}
+
     .badge {{ font-weight:800; margin-top:4px; }}
     .badge.good {{ color: var(--good); }}
     .badge.bad  {{ color: var(--bad);  }}
@@ -96,7 +121,9 @@ with header_r:
     st.session_state.dark = st.toggle("Tema scuro", value=st.session_state.dark)
 inject_theme_css(st.session_state.dark)
 
-# ====== MARKET TIME / AUTH ======
+# =========================
+# MARKET TIME / AUTH
+# =========================
 ROME = ZoneInfo("Europe/Rome")
 def is_it_market_open(now: datetime | None = None) -> bool:
     now = now or datetime.now(ROME)
@@ -118,8 +145,11 @@ sh = gc.open_by_key(SHEET_ID)
 ws_fund = sh.worksheet(FUND_TAB)
 ws_hist = sh.worksheet(HIST_TAB)
 
-# ====== UTILS ======
+# =========================
+# UTILS
+# =========================
 ISIN_REGEX = re.compile(r"^[A-Z]{2}[A-Z0-9]{10}$")
+
 def _letter_to_index(letter: str) -> int:
     if not letter: return -1
     s = letter.strip().upper(); n = 0
@@ -150,7 +180,7 @@ def fmt_it(x, dec=2):
     if x is None or (isinstance(x, float) and (np.isnan(x))): return "n/d" if dec==3 else ""
     return f"{x:,.{dec}f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# --- Prezzi ticker
+# -------- Prezzi ticker
 @st.cache_data(ttl=PRICE_TTL, show_spinner=False)
 def price_live(symbol: str):
     try:
@@ -180,11 +210,11 @@ def get_price(symbol: str, mode: str):
     if mode == "close": return price_close(symbol)
     return price_live(symbol) if is_it_market_open() else price_close(symbol)
 
-# --- FTSE MIB robusto (fallback multipli)
+# -------- FTSE MIB robusto (fallback multipli)
 @st.cache_data(ttl=PRICE_TTL, show_spinner=False)
 def mib_summary():
     last_close = prev_close = live = None
-    # prendi chiusure da uno dei simboli disponibili
+    # chiusure
     for sym in MIB_SYMBOLS:
         try:
             t = yf.Ticker(sym)
@@ -218,6 +248,7 @@ def gn_225(eps,bvps):
 
 # ====== HISTORY helpers ======
 DESIRED_HIST_HEADER = ["Timestamp","Ticker","Price","EPS","BVPS","Graham","Delta","MarginPct","Fonte"]
+
 def ensure_history_headers():
     values = ws_hist.get_all_values()
     if not values:
@@ -227,7 +258,9 @@ def ensure_history_headers():
         if col not in header: header.append(col); changed=True
     if changed: ws_hist.update("A1:I1", [header], value_input_option="USER_ENTERED")
 
-# ricarica dallo sheet ogni 60s (così vedi gli snapshot del workflow)
+def normalize_history_headers_strict():
+    ws_hist.update("A1:I1", [DESIRED_HIST_HEADER], value_input_option="USER_ENTERED")
+
 @st.cache_data(ttl=60, show_spinner=False)
 def load_history_records():
     return ws_hist.get_all_records()
@@ -248,7 +281,9 @@ def append_history_row(ts, ticker, price, eps, bvps, graham, fonte="App"):
            fonte]
     ws_hist.append_row(row, value_input_option="USER_ENTERED")
 
-# ====== LOAD FUNDAMENTALS ======
+# =========================
+# LOAD FUNDAMENTALS
+# =========================
 @st.cache_data(show_spinner=False)
 def load_fundamentals_by_letter():
     values = ws_fund.get_all_values()
@@ -257,6 +292,7 @@ def load_fundamentals_by_letter():
     def idx(letter): return _letter_to_index(letter) if letter else -1
     idx_t, idx_e, idx_b, idx_g = idx(TICKER_LETTER), idx(EPS_LETTER), idx(BVPS_LETTER), idx(GN_LETTER)
     idx_n, idx_i, idx_m, idx_is = idx(NAME_LETTER), idx(INV_URL_LETTER), idx(MORN_URL_LETTER), idx(ISIN_LETTER)
+
     df = pd.DataFrame({
         "Ticker_raw":[row[idx_t] if 0<=idx_t<len(row) else "" for row in data],
         "EPS_raw":[row[idx_e] if 0<=idx_e<len(row) else "" for row in data],
@@ -278,10 +314,12 @@ def load_fundamentals_by_letter():
     df["ISIN"]         = (df["ISIN_raw"].astype(str).str.strip() if isinstance(df["ISIN_raw"], pd.Series) else "")
     return df, {}
 
-# ====== UI ======
+# =========================
+# UI
+# =========================
 df, _ = load_fundamentals_by_letter()
 
-# FTSE MIB stripe
+# --- FTSE MIB stripe ---
 mib = mib_summary()
 open_now = is_it_market_open()
 main_val = mib["live"] if (open_now and mib["live"] is not None) else mib["last_close"]
@@ -324,6 +362,7 @@ else:
 
     tab1, tab2 = st.tabs(["📊 Analisi", "📜 Storico"])
 
+    # ========= TAB ANALISI =========
     with tab1:
         selected_label = st.selectbox("Scegli il Ticker", options=labels, index=0)
         tick = label_to_ticker[selected_label]
@@ -381,7 +420,6 @@ else:
         with c2: st.metric("Graham#", fmt_it(gn_sheet,2) if gn_sheet is not None else "n/d")
         if margin_pct is not None:
             with c3: st.metric("Margine", fmt_it(margin_pct,2) + "%")
-            # Etichetta sotto le metriche
             msg = "Sottovalutata" if margin_pct > 0 else "Sopravvalutata"
             css = "good" if margin_pct > 0 else "bad"
             star = " <span class='gstar'>⭐G</span>" if margin_pct >= 33 else ""
@@ -389,7 +427,7 @@ else:
         else:
             with c3: st.metric("Margine", "n/d")
 
-        # Formula (senza riga esplicativa)
+        # Formula (senza didascalia)
         st.markdown('<div class="v-formula-title" style="color:var(--good)">The GN Formula (Applied)</div>', unsafe_allow_html=True)
         if gn_applied is not None:
             st.markdown(
@@ -423,18 +461,42 @@ else:
                     if not tck: continue
                     px = get_price(normalize_symbol(tck), mode)
                     rows_out.append((tck, px, r["EPS"], r["BVPS"], r["GN_sheet"], f"App ({mode_badge})"))
-                # append bulk semplice (per limitare traffico fai chunk se serve)
                 for rr in rows_out:
                     append_history_row(now_str, *rr)
                 st.success(f"Snapshot di {len(rows_out)} titoli salvato ✅")
 
+    # ========= TAB STORICO =========
     with tab2:
-        dfh = pd.DataFrame(load_history_records())
+        # pulsante per normalizzare header a standard se in passato sono stati alterati
+        if st.button("🧹 Normalizza intestazioni 'Storico' (A1:I1)"):
+            normalize_history_headers_strict()
+            st.success("Header normalizzato. Ricarico…")
+            st.cache_data.clear(); st.experimental_rerun()
+
+        dfh_raw = load_history_records()
+        dfh = pd.DataFrame(dfh_raw)
+
         if not dfh.empty:
-            dfh["Timestamp"] = pd.to_datetime(dfh["Timestamp"], errors="coerce")
+            # parsing numeri robusto
+            def _to_num(s): 
+                try:
+                    if s in ("", None): return np.nan
+                    s = str(s).replace("€","").replace("%","").replace("\u00A0","").strip()
+                    s = re.sub(r"[^0-9\-,\.]","",s)
+                    if s in ("","-",".",","): return np.nan
+                    if "," in s and "." in s:
+                        if s.rfind(",") > s.rfind("."): s = s.replace(".","").replace(",",".")
+                        else: s = s.replace(",","")
+                    elif "," in s: s = s.replace(",",".")
+                    return float(s)
+                except: return np.nan
+
+            # coerci tipi
+            if "Timestamp" in dfh: dfh["Timestamp"] = pd.to_datetime(dfh["Timestamp"], errors="coerce")
             for c in ["Price","EPS","BVPS","Graham","Delta","MarginPct"]:
-                if c in dfh.columns: dfh[c] = pd.to_numeric(dfh[c], errors="coerce")
-            mask = dfh["Delta"].isna() | dfh["MarginPct"].isna()
+                if c in dfh: dfh[c] = dfh[c].map(_to_num)
+
+            mask = dfh.get("Delta").isna() | dfh.get("MarginPct").isna()
             if {"Price","Graham"}.issubset(dfh.columns):
                 dfh.loc[mask, "Delta"] = (dfh["Price"] - dfh["Graham"])
                 dfh.loc[mask, "MarginPct"] = (1 - (dfh["Price"]/dfh["Graham"])) * 100
@@ -457,9 +519,9 @@ else:
 
             show_cols = [c for c in ["Timestamp","Ticker","Price","EPS","BVPS","Graham","Delta","MarginPct","Fonte"] if c in dft.columns]
             disp = dft[show_cols].copy()
-            if "Price" in disp:   disp["Price"]   = disp["Price"].map(lambda v: fmt_it(v,3))
+            if "Price" in disp:   disp["Price"]   = disp["Price"].map(lambda v: fmt_it(v,3) if pd.notnull(v) else "")
             for c in ["EPS","BVPS","Graham","Delta"]:
-                if c in disp: disp[c] = disp[c].map(lambda v: fmt_it(v,2))
+                if c in disp: disp[c] = disp[c].map(lambda v: fmt_it(v,2) if pd.notnull(v) else "")
             if "MarginPct" in disp: disp["MarginPct"] = disp["MarginPct"].map(lambda v: (fmt_it(v,2)+"%") if pd.notnull(v) else "")
             st.dataframe(disp, use_container_width=True, hide_index=True)
 
