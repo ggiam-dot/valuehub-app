@@ -43,7 +43,7 @@ st.set_page_config(page_title="Vigil – Value Investment Graham Lookup",
                    page_icon="📈", layout="wide")
 
 # =========================
-# THEME & CSS
+# THEME & CSS (leggibilità tab/radio + badge sotto il margine)
 # =========================
 if "dark" not in st.session_state:
     st.session_state.dark = False
@@ -52,13 +52,13 @@ def inject_theme_css(dark: bool):
     if dark:
         bg="#0b0f16"; paper="#131a24"; text="#f3f7fb"; sub="#c6cfdb"
         accent="#66b1ff"; border="#2a3340"; good="#0abf53"; bad="#ff4d4f"; gold="#FFD166"
-        metric_val="#ffffff"; metric_lab="#d9e2ef"
+        metric_val="#ffffff"; metric_lab="#e6eef8"
         formula_bg="#0f2a1a"; formula_border="#2f8f5b"; formula_text="#eaffee"
         stripe_bg="#0f1320"; pill_bg="#1b2432"; btn_bg="#17202b"; btn_txt="#f3f7fb"
     else:
         bg="#ffffff"; paper="#ffffff"; text="#151515"; sub="#4a4a4a"
-        accent="#0a66ff"; border="#dfe3ea"; good="#0a7f2e"; bad="#c62828"; gold="#C79200"
-        metric_val="#111111"; metric_lab="#333333"
+        accent="#0a66ff"; border="#cfd6e1"; good="#0a7f2e"; bad="#c62828"; gold="#C79200"
+        metric_val="#111111"; metric_lab="#1f1f1f"
         formula_bg="#e9f7ef"; formula_border="#b8e6c9"; formula_text="#0d5b2a"
         stripe_bg="#f5f7fa"; pill_bg="#eef3ff"; btn_bg="#ffffff"; btn_txt="#151515"
 
@@ -100,17 +100,34 @@ def inject_theme_css(dark: bool):
     .pct-pos {{ color: var(--good); font-weight:900; }}
     .pct-neg {{ color: var(--bad);  font-weight:900; }}
 
+    /* Metriche leggibili */
     [data-testid="stMetric"] > div > div:nth-child(1) {{ color: var(--metric-lab) !important; font-weight:700; }}
     [data-testid="stMetricValue"] {{ color: var(--metric-val) !important; font-weight:900; }}
 
+    /* Etichetta subito sotto il Margine */
+    .badge-under-metric {{
+      font-weight: 900; font-size: 18px; line-height: 1;
+      margin-top: -6px; text-align: center;
+    }}
+    .badge-under-metric.good {{ color: var(--good); }}
+    .badge-under-metric.bad  {{ color: var(--bad);  }}
+    .badge-under-metric .gstar {{ color: var(--gold); margin-left:8px; }}
+
+    /* Pulsanti uniformi */
     .stButton>button {{ width: 100%; background: var(--btn-bg); color: var(--btn-txt);
         border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; font-weight: 800; }}
     .stButton>button:hover {{ border-color: var(--accent); }}
 
-    .badge {{ font-weight:800; margin-top:4px; }}
-    .badge.good {{ color: var(--good); }}
-    .badge.bad  {{ color: var(--bad);  }}
-    .gstar {{ color: var(--gold); font-weight:900; margin-left:6px; }}
+    /* ✅ Testi sempre leggibili: Tab, Radio, Label */
+    .stTabs [data-baseweb="tab"] p,
+    .stRadio > label, 
+    .stRadio div[role="radiogroup"] label,
+    .stRadio div[role="radiogroup"] label p,
+    .stSelectbox > label,
+    .stDataFrame > div > div {{ color: var(--text) !important; }}
+
+    /* Radio orizzontali ben spaziate */
+    [data-baseweb="radio"] > div {{ gap: 16px; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -413,19 +430,20 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-        # Metriche
+        # Metriche (badge sotto al Margine)
         margin_pct = (1 - (price_val/gn_sheet))*100 if (price_val is not None and gn_sheet not in (None,0)) else None
         c1,c2,c3 = st.columns(3)
         with c1: st.metric(f"Prezzo ({mode_badge})", fmt_it(price_val,3))
         with c2: st.metric("Graham#", fmt_it(gn_sheet,2) if gn_sheet is not None else "n/d")
-        if margin_pct is not None:
-            with c3: st.metric("Margine", fmt_it(margin_pct,2) + "%")
-            msg = "Sottovalutata" if margin_pct > 0 else "Sopravvalutata"
-            css = "good" if margin_pct > 0 else "bad"
-            star = " <span class='gstar'>⭐G</span>" if margin_pct >= 33 else ""
-            st.markdown(f"<div class='badge {css}' style='text-align:right'>{msg}{star}</div>", unsafe_allow_html=True)
-        else:
-            with c3: st.metric("Margine", "n/d")
+        with c3:
+            if margin_pct is not None:
+                st.metric("Margine", fmt_it(margin_pct,2) + "%")
+                msg  = "Sottovalutata" if margin_pct > 0 else "Sopravvalutata"
+                css  = "good" if margin_pct > 0 else "bad"
+                star = " <span class='gstar'>⭐G</span>" if margin_pct >= 33 else ""
+                st.markdown(f"<div class='badge-under-metric {css}'>{msg}{star}</div>", unsafe_allow_html=True)
+            else:
+                st.metric("Margine", "n/d")
 
         # Formula (senza didascalia)
         st.markdown('<div class="v-formula-title" style="color:var(--good)">The GN Formula (Applied)</div>', unsafe_allow_html=True)
@@ -467,18 +485,18 @@ else:
 
     # ========= TAB STORICO =========
     with tab2:
-        # pulsante per normalizzare header a standard se in passato sono stati alterati
+        # Pulsante per allineare header a standard
         if st.button("🧹 Normalizza intestazioni 'Storico' (A1:I1)"):
             normalize_history_headers_strict()
             st.success("Header normalizzato. Ricarico…")
-            st.cache_data.clear(); st.experimental_rerun()
+            st.cache_data.clear(); st.rerun()
 
         dfh_raw = load_history_records()
         dfh = pd.DataFrame(dfh_raw)
 
         if not dfh.empty:
             # parsing numeri robusto
-            def _to_num(s): 
+            def _to_num(s):
                 try:
                     if s in ("", None): return np.nan
                     s = str(s).replace("€","").replace("%","").replace("\u00A0","").strip()
@@ -491,7 +509,6 @@ else:
                     return float(s)
                 except: return np.nan
 
-            # coerci tipi
             if "Timestamp" in dfh: dfh["Timestamp"] = pd.to_datetime(dfh["Timestamp"], errors="coerce")
             for c in ["Price","EPS","BVPS","Graham","Delta","MarginPct"]:
                 if c in dfh: dfh[c] = dfh[c].map(_to_num)
