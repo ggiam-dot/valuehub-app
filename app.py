@@ -9,6 +9,7 @@ import json, re
 
 import gspread
 from google.oauth2.service_account import Credentials
+from streamlit_autorefresh import st_autorefresh   # NEW
 
 # =========================
 # CONFIG (da Secrets)
@@ -19,6 +20,8 @@ HIST_TAB  = st.secrets.get("hist_tab", "Storico")
 YF_SUFFIX = st.secrets.get("yf_suffix", ".MI")
 MIB_SYMBOL = st.secrets.get("mib_symbol", "^FTSEMIB")
 BORSA_LINK = st.secrets.get("borsa_link", "https://www.borsaitaliana.it/borsa/indice/ftse-mib/dettaglio.html")
+
+# Lettere di colonna
 TICKER_LETTER = st.secrets.get("ticker_col_letter", "A")
 EPS_LETTER    = st.secrets.get("eps_col_letter", "B")
 BVPS_LETTER   = st.secrets.get("bvps_col_letter", "C")
@@ -27,6 +30,8 @@ NAME_LETTER   = st.secrets.get("name_col_letter", "")
 INV_URL_LETTER= st.secrets.get("investing_col_letter", "")
 MORN_URL_LETTER=st.secrets.get("morning_col_letter", "")
 ISIN_LETTER   = st.secrets.get("isin_col_letter", "")
+
+# Prezzi: TTL breve per evitare rate-limit; puoi cambiare nei secrets
 PRICE_TTL = int(st.secrets.get("price_ttl_seconds", 30))
 
 st.set_page_config(page_title="Vigil – Value Investment Graham Lookup",
@@ -63,16 +68,27 @@ def inject_theme_css(dark: bool):
       --btn-bg:{btn_bg}; --btn-txt:{btn_txt};
     }}
     .stApp {{ background-color: var(--bg); color: var(--text); }}
+
+    /* Titolo snello */
+    .v-title {{ font-weight: 800; font-size: 1.35rem; line-height: 1.2; margin: 0 0 4px 0; }}
+    .v-title .v-title-light {{ font-weight: 600; opacity: .9; }}
+    @media (max-width: 640px) {{ .v-title {{ font-size: 1.15rem; }} }}
+
     .v-card {{ background: var(--paper); border:1px solid var(--border);
                border-radius:14px; padding:14px 16px; }}
     .v-sub {{ color: var(--sub); font-size:12px; }}
+
     .v-links {{ display:flex; gap:18px; align-items:center; flex-wrap:wrap; }}
     .v-link {{ display:flex; gap:8px; align-items:center; font-size:14px; }}
     .v-link img {{ width:20px; height:20px; }}
-    .pill {{ background:var(--pill-bg); padding:4px 10px; border-radius:999px; border:1px solid var(--border); font-weight:600; }}
+
+    .pill {{ background:var(--pill-bg); padding:4px 10px; border-radius:999px;
+             border:1px solid var(--border); font-weight:600; }}
+
     .btn-link {{ background:var(--btn-bg); color:var(--btn-txt) !important; border:1px solid var(--border);
                  padding:8px 12px; border-radius:10px; text-decoration:none; display:inline-block; }}
     .btn-link:hover {{ border-color:var(--accent); }}
+
     .stripe {{
       background: var(--stripe-bg); border: 1px solid var(--border); border-radius: 12px;
       padding: 8px 12px; display:flex; align-items:center; justify-content:space-between; gap: 10px;
@@ -80,10 +96,12 @@ def inject_theme_css(dark: bool):
     }}
     .pct-pos {{ color: var(--good); font-weight:700; }}
     .pct-neg {{ color: var(--bad);  font-weight:700; }}
+
     .v-formula-title {{ font-size: 1.05rem; font-weight:800; margin: 6px 0 8px; }}
     .v-formula-box {{ background: var(--formula-bg); border:1px solid var(--formula-border);
                       border-radius:12px; padding: 12px 14px; color: var(--formula-text); }}
     .v-formula-code {{ font-family: ui-monospace, Menlo, Consolas, monospace; font-size:15px; font-weight:700; }}
+
     /* Pulsanti Streamlit uniformi */
     .stButton>button {{
       width: 100%;
@@ -92,6 +110,7 @@ def inject_theme_css(dark: bool):
       padding: 10px 14px; font-weight: 600;
     }}
     .stButton>button:hover {{ border-color: var(--accent); }}
+
     /* Mobile tweaks */
     @media (max-width: 640px) {{
       .stTabs [data-baseweb="tab-list"] {{ gap: 8px; }}
@@ -101,7 +120,10 @@ def inject_theme_css(dark: bool):
 
 header_l, header_r = st.columns([4,1], vertical_alignment="center")
 with header_l:
-    st.title("📈 Vigil – Value Investment Graham Intelligent Lookup")
+    st.markdown(
+        "<div class='v-title'>📈 Vigil – Value Investment Graham <span class='v-title-light'>(Intelligent)</span> Lookup</div>",
+        unsafe_allow_html=True
+    )
 with header_r:
     st.session_state.dark = st.toggle("🌙", value=st.session_state.dark, help="Light/Dark mode", label_visibility="collapsed")
 inject_theme_css(st.session_state.dark)
@@ -135,6 +157,8 @@ ws_hist = sh.worksheet(HIST_TAB)
 # =========================
 # UTILS
 # =========================
+ISIN_REGEX = re.compile(r"^[A-Z]{2}[A-Z0-9]{10}$")
+
 def _letter_to_index(letter: str) -> int:
     if not letter: return -1
     s = letter.strip().upper(); n = 0
@@ -292,6 +316,7 @@ def load_fundamentals_by_letter():
     df["InvestingURL_raw"]= [row[idx_i]  if 0<=idx_i <len(row) else "" for row in data] if idx_i  >=0 else ""
     df["MorningURL_raw"]  = [row[idx_m]  if 0<=idx_m <len(row) else "" for row in data] if idx_m  >=0 else ""
     df["ISIN_raw"]        = [row[idx_is] if 0<=idx_is<len(row) else "" for row in data] if idx_is>=0 else ""
+
     df = df[(df["Ticker_raw"].astype(str).str.strip()!="")].reset_index(drop=True)
     df["Ticker"]   = df["Ticker_raw"].astype(str).str.strip().str.upper()
     df["EPS"]      = df["EPS_raw"].apply(to_number)
@@ -300,7 +325,8 @@ def load_fundamentals_by_letter():
     df["Name"]     = (df["Name_raw"].astype(str).str.strip() if isinstance(df["Name_raw"], pd.Series) else "")
     df["InvestingURL"] = (df["InvestingURL_raw"].astype(str).str.strip() if isinstance(df["InvestingURL_raw"], pd.Series) else "")
     df["MorningURL"]   = (df["MorningURL_raw"].astype(str).str.strip() if isinstance(df["MorningURL_raw"], pd.Series) else "")
-    df["ISIN"]         = (df["ISIN_raw"].astype str).str.strip() if isinstance(df["ISIN_raw"], pd.Series) else ""
+    df["ISIN"]         = (df["ISIN_raw"].astype(str).str.strip() if isinstance(df["ISIN_raw"], pd.Series) else "")
+
     return df, {}
 
 # ============ UI ============
@@ -314,7 +340,7 @@ pct_html = "" if mib_pct is None else f"<span class='{'pct-pos' if mib_pct>=0 el
 st.markdown(f"""
 <div class="stripe">
   <div class="pill">🇮🇹 FTSE MIB · {status}</div>
-  <div style="font-weight:700">{ fmt_it(mib_last,3) if mib_last is not None else "n/d" } {pct_html}</div>
+  <div style="font-weight:700">{ (fmt_it(mib_last,3) if mib_last is not None else "n/d") } {pct_html}</div>
   <div><a class="btn-link" href="{BORSA_LINK}" target="_blank" rel="noopener">Borsa Italiana ↗︎</a></div>
 </div>
 """, unsafe_allow_html=True)
@@ -362,20 +388,22 @@ else:
         with c_ref3:
             auto = st.toggle("Auto-refresh 60s", value=False, help="Aggiorna automaticamente i prezzi")
             if auto:
-                try: st.autorefresh(interval=60_000, key="auto-refresh")
-                except: pass
+                st_autorefresh(interval=60_000, key="auto-refresh")
 
         mode = {"Auto":"auto","Intraday":"live","Chiusura":"close"}[price_mode]
         price_val = get_price(symbol, mode)
         mode_badge = {"auto":"Auto","live":"Intraday","close":"Chiusura"}[mode]
 
         company = get_display_name(tick)
-        isin = str(row.get("ISIN") or "").strip()
 
-        # --- Link
+        # --- Link con ISIN validato
+        isin_raw = str(row.get("ISIN") or "").strip().upper()
+        isin = isin_raw if ISIN_REGEX.match(isin_raw) else ""
+        query_key = isin if isin else tick
+
         yahoo_url = f"https://finance.yahoo.com/quote/{tick}"
-        inv_url   = (row.get("InvestingURL") or "").strip() or f"https://it.investing.com/search/?q={isin or tick}"
-        mor_url   = (row.get("MorningURL")  or "").strip() or f"https://www.morningstar.com/search?query={isin or tick}"
+        inv_url   = (row.get("InvestingURL") or "").strip() or f"https://it.investing.com/search/?q={query_key}"
+        mor_url   = (row.get("MorningURL")  or "").strip() or f"https://www.morningstar.com/search?query={query_key}"
 
         st.markdown(f"""
         <div class="v-card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
@@ -457,9 +485,10 @@ else:
                     dfh[c] = pd.to_numeric(dfh[c], errors="coerce")
             # calcola Delta/Margin se mancanti
             mask = dfh["Delta"].isna() | dfh["MarginPct"].isna()
-            if "Price" in dfh and "Graham" in dfh:
+            if {"Price","Graham"}.issubset(dfh.columns):
                 dfh.loc[mask, "Delta"] = (dfh["Price"] - dfh["Graham"])
                 dfh.loc[mask, "MarginPct"] = (1 - (dfh["Price"]/dfh["Graham"])) * 100
+
             try: current_tick = label_to_ticker[selected_label]
             except: current_tick = None
             dft = dfh[dfh["Ticker"].astype(str).str.upper()==(current_tick or "").upper()] if current_tick else dfh
