@@ -18,6 +18,10 @@ FUND_TAB  = st.secrets.get("fund_tab", "Fondamentali")
 HIST_TAB  = st.secrets.get("hist_tab", "Storico")
 YF_SUFFIX = st.secrets.get("yf_suffix", ".MI")
 
+# FTSE MIB stripe (opzionale)
+MIB_SYMBOL = st.secrets.get("mib_symbol", "^FTSEMIB")  # puoi mettere "FTSEMIB.MI" se preferisci
+BORSA_LINK = st.secrets.get("borsa_link", "https://www.borsaitaliana.it/borsa/indice/ftse-mib/dettaglio.html")
+
 # Lettere di colonna (MAIUSCOLE). Default: A=Ticker, B=EPS, C=BVPS, D=Graham
 TICKER_LETTER = st.secrets.get("ticker_col_letter", "A")
 EPS_LETTER    = st.secrets.get("eps_col_letter", "B")
@@ -29,11 +33,14 @@ INV_URL_LETTER   = st.secrets.get("investing_col_letter", "")    # es. "F"
 MORN_URL_LETTER  = st.secrets.get("morning_col_letter", "")      # es. "G"
 ISIN_LETTER      = st.secrets.get("isin_col_letter", "")         # es. "H"
 
+# TTL per i prezzi (per evitare rate-limit di Yahoo). Abbassa a 15 per più “live”.
+PRICE_TTL = int(st.secrets.get("price_ttl_seconds", 30))
+
 st.set_page_config(page_title="Vigil – Value Investment Graham Lookup",
                    page_icon="📈", layout="wide")
 
 # =========================
-# THEME TOGGLE (Light/Dark) + Mobile tweaks
+# THEME & CSS (icone più piccole)
 # =========================
 def inject_theme_css(dark: bool):
     if dark:
@@ -41,11 +48,13 @@ def inject_theme_css(dark: bool):
         accent="#4da3ff"; border="#2a2f3a"; good="#9ad17b"; bad="#ff6b6b"; gold="#DAA520"
         metric_val = "#f2f2f2"; metric_lab = "#cfcfcf"
         formula_bg    = "#10351e"; formula_border= "#2f8f5b"; formula_text  = "#e6ffef"
+        stripe_bg = "#121723"
     else:
         bg = "#ffffff"; paper="#fafafa"; text="#222"; sub="#666"
         accent="#0b74ff"; border="#e5e7eb"; good="#0a7f2e"; bad="#b00020"; gold="#DAA520"
         metric_val = "#111"; metric_lab = "#444"
         formula_bg    = "#e9f8ef"; formula_border= "#b8e6c9"; formula_text  = "#0d5b2a"
+        stripe_bg = "#f7f7f8"
 
     st.markdown(
         f"""
@@ -55,18 +64,27 @@ def inject_theme_css(dark: bool):
           --accent:{accent}; --border:{border}; --good:{good}; --bad:{bad}; --gold:{gold};
           --metric-val:{metric_val}; --metric-lab:{metric_lab};
           --formula-bg:{formula_bg}; --formula-border:{formula_border}; --formula-text:{formula_text};
+          --stripe-bg:{stripe_bg};
         }}
         .stApp {{ background-color: var(--bg); color: var(--text); }}
         h1, h2, h3, h4, h5, h6 {{ color: var(--text) !important; }}
         a, a * {{ color: var(--accent) !important; }}
+
         .v-card {{ background: var(--paper); border:1px solid var(--border);
                    border-radius:14px; padding:14px 16px; }}
+
+        .v-links a img {{ width:16px; height:16px; filter: grayscale(40%) opacity(0.85); }}
+        .v-links a.yf img {{ width:16px; height:16px; filter:none; }}
+        .v-links {{ gap:8px; }}
+
         .v-chip-gold {{ color: var(--gold); font-weight:800; }}
         .v-sub {{ color: var(--sub); font-size:12px; }}
+
         [data-testid="stMetric"] > div > div:nth-child(1) {{ color: var(--metric-lab) !important; }}
         [data-testid="stMetricValue"] {{ color: var(--metric-val) !important; }}
         [data-testid="stMetricDelta"] {{ color: var(--metric-val) !important; }}
-        .v-formula-title {{ font-size: 1.15rem; font-weight: 800; margin: 6px 0 8px; }}
+
+        .v-formula-title {{ font-size: 1.05rem; font-weight: 800; margin: 6px 0 8px; }}
         .v-formula-box {{
           background: var(--formula-bg);
           border: 1px solid var(--formula-border);
@@ -74,9 +92,21 @@ def inject_theme_css(dark: bool):
           color: var(--formula-text);
         }}
         .v-formula-code {{
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-          font-size: 16px; font-weight: 700;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+          font-size: 15px; font-weight: 700;
         }}
+
+        .mib-stripe {{
+          background: var(--stripe-bg);
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          padding: 8px 12px;
+          display:flex; align-items:center; justify-content:space-between;
+          gap: 10px; margin-bottom: 8px;
+        }}
+        .mib-quote {{ font-weight:700; }}
+        .mib-pct-pos {{ color: var(--good); font-weight:700; }}
+        .mib-pct-neg {{ color: var(--bad); font-weight:700; }}
         </style>
         """,
         unsafe_allow_html=True
@@ -99,7 +129,6 @@ def get_gsheet_client():
     if "gcp_service_account" in st.secrets:
         creds_dict = st.secrets["gcp_service_account"]
     else:
-        # fallback locale opzionale (solo se hai committato il file; su Streamlit Cloud in genere NON serve)
         with open("service_account.json","r") as f:
             creds_dict = json.load(f)
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
@@ -145,9 +174,7 @@ def normalize_symbol(sym: str) -> str:
     s = str(sym).strip().upper()
     return s if "." in s else s + YF_SUFFIX
 
-# === Prezzo live: TTL breve per aggiornarsi davvero ===
-PRICE_TTL = int(st.secrets.get("price_ttl_seconds", 30))
-
+# === Prezzi live (TTL breve) ===
 @st.cache_data(show_spinner=False, ttl=PRICE_TTL)
 def fetch_price_yf(symbol: str):
     try:
@@ -170,6 +197,28 @@ def fetch_price_yf(symbol: str):
         return None
     except Exception:
         return None
+
+# FTSE MIB: prezzo + % vs close precedente
+@st.cache_data(show_spinner=False, ttl=PRICE_TTL)
+def fetch_quote_and_pct(symbol: str):
+    try:
+        t = yf.Ticker(symbol)
+        last = prev = None
+        fi = getattr(t, "fast_info", None)
+        if fi:
+            last = fi.get("last_price")
+            prev = fi.get("previous_close") or fi.get("regular_market_previous_close")
+        if last is None or prev is None:
+            h = t.history(period="2d", interval="1d")
+            if not h.empty:
+                last = float(h["Close"].dropna().iloc[-1])
+                if len(h) >= 2:
+                    prev = float(h["Close"].dropna().iloc[-2])
+        if last is None: return None, None
+        pct = None if not prev else ((float(last) - float(prev)) / float(prev)) * 100
+        return float(last), (None if pct is None else float(pct))
+    except Exception:
+        return None, None
 
 @st.cache_data(show_spinner=False, ttl=86400)
 def fetch_company_name_yf(symbol: str) -> str:
@@ -222,7 +271,7 @@ def append_history_row(ts, ticker, price, eps, bvps, graham, fonte="App"):
     ]
     ws_hist.append_row(row, value_input_option="USER_ENTERED")
 
-def append_history_bulk(ts, rows):  # rows: lista di tuple (ticker, price, eps, bvps, graham, fonte)
+def append_history_bulk(ts, rows):  # rows: [(ticker, price, eps, bvps, graham, fonte), ...]
     ensure_history_headers()
     out = []
     for ticker, price, eps, bvps, graham, fonte in rows:
@@ -310,6 +359,24 @@ def load_fundamentals_by_letter():
 # UI
 # =========================
 df, meta = load_fundamentals_by_letter()
+
+# --- FTSE MIB STRIPE (sempre visibile) ---
+mib_price, mib_pct = fetch_quote_and_pct(MIB_SYMBOL)
+pct_html = ""
+if mib_pct is not None:
+    cls = "mib-pct-pos" if mib_pct >= 0 else "mib-pct-neg"
+    pct_html = f"<span class='{cls}'>({mib_pct:+.2f}%)</span>"
+st.markdown(
+    f"""
+    <div class="mib-stripe">
+      <div>🇮🇹 <strong>FTSE MIB</strong></div>
+      <div class="mib-quote">{ (f"{mib_price:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")) if mib_price else "n/d" } {pct_html}</div>
+      <div><a href="{BORSA_LINK}" target="_blank" rel="noopener">Borsa Italiana ↗︎</a></div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
 if df.empty:
     st.warning("Nessun dato utile. Controlla il foglio.")
 else:
@@ -354,7 +421,7 @@ else:
         if not mor_url:
             mor_url = f"https://www.morningstar.com/search?query={query_key}"
 
-        # Header
+        # Header compatto con icone piccole
         st.markdown(
             f"""
             <div class="v-card" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -362,15 +429,15 @@ else:
                 <h3 style="margin:0">{tick} — {company_name}</h3>
                 {"<div class='v-sub'>ISIN: "+isin+"</div>" if isin else ""}
               </div>
-              <span class="v-links" style="display:inline-flex;gap:10px;align-items:center; margin-left:4px;">
+              <span class="v-links" style="display:inline-flex;align-items:center; margin-left:4px;">
                 <a class="yf"  href="{yahoo_url}" target="_blank" rel="noopener" title="Yahoo Finance">
-                  <img src="https://www.google.com/s2/favicons?sz=64&domain=finance.yahoo.com">
+                  <img src="https://www.google.com/s2/favicons?sz=32&domain=finance.yahoo.com">
                 </a>
-                <a class="dim" href="{inv_url}" target="_blank" rel="noopener" title="Investing">
-                  <img src="https://www.google.com/s2/favicons?sz=64&domain=it.investing.com">
+                <a href="{inv_url}" target="_blank" rel="noopener" title="Investing">
+                  <img src="https://www.google.com/s2/favicons?sz=32&domain=it.investing.com">
                 </a>
-                <a class="dim" href="{mor_url}" target="_blank" rel="noopener" title="Morningstar">
-                  <img src="https://www.google.com/s2/favicons?sz=64&domain=morningstar.com">
+                <a href="{mor_url}" target="_blank" rel="noopener" title="Morningstar">
+                  <img src="https://www.google.com/s2/favicons?sz=32&domain=morningstar.com">
                 </a>
               </span>
             </div>
@@ -385,7 +452,13 @@ else:
                 st.cache_data.clear()
                 st.rerun()
         with r2:
-            st.caption(f"Aggiornamento prezzo con TTL **{PRICE_TTL}s** (evita rate-limit Yahoo).")
+            auto = st.toggle("Auto-refresh 60s", value=False, help="Aggiorna automaticamente i prezzi")
+            if auto:
+                try:
+                    st.autorefresh(interval=60_000, key="auto-refresh")
+                except Exception:
+                    pass
+            st.caption(f"Prezzi con TTL **{PRICE_TTL}s** (Yahoo può avere ritardi di mercato).")
 
         # Metriche
         margin_pct = (1 - (price_live/gn_sheet))*100 if (price_live is not None and gn_sheet not in (None,0)) else None
@@ -494,4 +567,3 @@ else:
                     st.line_chart(plot_df, use_container_width=True)
         else:
             st.info("La tab Storico è vuota.")
-
