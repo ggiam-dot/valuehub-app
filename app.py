@@ -32,7 +32,7 @@ MORN_URL_LETTER=st.secrets.get("morning_col_letter", "")
 ISIN_LETTER   = st.secrets.get("isin_col_letter", "")
 
 PRICE_TTL = int(st.secrets.get("price_ttl_seconds", 20))
-AUTOREFRESH_MS = int(st.secrets.get("autorefresh_ms", 20000))
+AUTOREFRESH_MS = int(st.secrets.get("autorefresh_ms", 15000))  # 15s di default
 
 st.set_page_config(page_title="Vigil – Value Investment Graham Lookup",
                    page_icon="📈", layout="wide")
@@ -79,7 +79,6 @@ def inject_css(dark: bool):
       .stButton>button{{ background:var(--paper); color:var(--text); border:1px solid var(--border);
                         border-radius:12px; padding:8px 14px; font-weight:800; }}
       .stButton>button:hover{{ border-color:var(--accent); }}
-      .mini-btn>button{{ width:44px !important; padding:6px 8px !important; border-radius:8px !important; font-weight:900 !important; }}
 
       .judge-box{{ border:2px solid #ddd; border-radius:14px; padding:12px; }}
       .judge-val{{ font-size:28px; font-weight:900; }}
@@ -132,7 +131,7 @@ def _letter_to_index(letter: str) -> int:
     return n-1
 
 def parse_num(s):
-    """Robusto: '1.234,56' | '1,234.56' | '75,48000336' | '75.48000336' -> float"""
+    """Robusto per '1.234,56' | '1,234.56' | '75,48000336' | '75.48000336'."""
     if s is None or s == "": return np.nan
     if isinstance(s, (int, float)):
         try: return float(s)
@@ -248,7 +247,7 @@ def normalize_history_headers_strict():
 
 @st.cache_data(ttl=60, show_spinner=False)
 def load_history_df():
-    rows = ws_hist.get_all_values()  # valori grezzi, niente casting automatico
+    rows = ws_hist.get_all_values()  # valori grezzi
     if not rows: return pd.DataFrame()
     header, data = rows[0], rows[1:]
     df = pd.DataFrame(data, columns=header)
@@ -336,7 +335,7 @@ st.markdown(f"""
 if df.empty:
     st.warning("Nessun dato utile. Controlla il foglio.")
 else:
-    st_autorefresh(interval=AUTOREFRESH_MS, key="auto-refresh")  # refresh automatico
+    st_autorefresh(interval=AUTOREFRESH_MS, key="auto-refresh")  # auto refresh 15s
 
     @st.cache_data(show_spinner=False, ttl=86400)
     def display_name(t: str) -> str:
@@ -389,34 +388,25 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-        # PREZZO + ⟳ accanto + GRAHAM# + MARGINE (box)
+        # PREZZO + GRAHAM# + MARGINE (box) — senza bottone refresh
         px = auto_price(symbol)
         pc = prev_close(symbol)
         delta_pct = None if (px is None or pc in (None,0)) else ((px - pc)/pc*100)
 
         col_price, col_gn, col_judge = st.columns([1.8, 1.1, 1.2], vertical_alignment="center")
         with col_price:
-            ip1, ip2 = st.columns([0.88, 0.12], vertical_alignment="center")
-            with ip1:
-                st.markdown(
-                    f"<div class='m-label'>Prezzo</div>"
-                    f"<div class='m-value'>€ {fmt_it(px,3) if px is not None else 'n/d'}"
-                    + (f"<span class='delta-chip {'pos' if delta_pct and delta_pct>=0 else 'neg'}'>{delta_pct:+.2f}%</span>" if delta_pct is not None else "")
-                    + "</div>", unsafe_allow_html=True
-                )
-            with ip2:
-                st.markdown("<div class='mini-btn' style='margin-top:22px;'>", unsafe_allow_html=True)
-                if st.button("⟳", key="refresh_now", help="Aggiorna quotazione"):
-                    st.cache_data.clear(); st.rerun()
-                st.markdown("</div>", unsafe_allow_html=True)
-
+            st.markdown(
+                f"<div class='m-label'>Prezzo</div>"
+                f"<div class='m-value'>€ {fmt_it(px,3) if px is not None else 'n/d'}"
+                + (f"<span class='delta-chip {'pos' if delta_pct and delta_pct>=0 else 'neg'}'>{delta_pct:+.2f}%</span>" if delta_pct is not None else "")
+                + "</div>", unsafe_allow_html=True
+            )
         with col_gn:
             st.markdown(
                 f"<div class='m-label'>Graham#</div>"
                 f"<div class='m-value'>€ {fmt_it(gn_sheet,2) if gn_sheet is not None else 'n/d'}</div>",
                 unsafe_allow_html=True
             )
-
         with col_judge:
             st.markdown("<div class='m-label'>Margine</div>", unsafe_allow_html=True)
             margin_pct = (1 - (px/gn_sheet))*100 if (px is not None and gn_sheet not in (None,0)) else None
