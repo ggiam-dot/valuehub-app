@@ -45,55 +45,49 @@ def inject_css(dark: bool):
     if dark:
         bg="#0b0f16"; paper="#131a24"; text="#f3f7fb"; sub="#c6cfdb"; border="#2a3340"
         good="#0abf53"; bad="#ff4d4f"; gold="#FFD166"; accent="#66b1ff"
-        chip="#1b2432"; strip="#0f1320"; df_text="#f3f7fb"
+        chip="#1b2432"; strip="#0f1320"; df_text="#f3f7fb"; label="#e2e8f5"
     else:
         bg="#ffffff"; paper="#ffffff"; text="#151515"; sub="#4a4a4a"; border="#222"
         good="#0a7f2e"; bad="#c62828"; gold="#C79200"; accent="#0a66ff"
-        chip="#eef3ff"; strip="#f7f9fc"; df_text="#111"
+        chip="#eef3ff"; strip="#f7f9fc"; df_text="#111"; label="#333"
 
     st.markdown(f"""
     <style>
       :root {{
         --bg:{bg}; --paper:{paper}; --text:{text}; --sub:{sub}; --border:{border};
-        --good:{good}; --bad:{bad}; --gold:{gold}; --accent:{accent}; --chip:{chip}; --strip:{strip}; --dftext:{df_text};
+        --good:{good}; --bad:{bad}; --gold:{gold}; --accent:{accent};
+        --chip:{chip}; --strip:{strip}; --dftext:{df_text}; --label:{label};
       }}
       .stApp{{ background:var(--bg); color:var(--text); }}
       .v-title{{ font-weight:800; font-size:1.28rem; margin:0 0 8px; }}
       .v-title .v-light{{ font-weight:700; }}
       .v-card{{ background:var(--paper); border:1px solid #ddd; border-radius:14px; padding:12px 14px; }}
       .v-sub{{ color:var(--sub); font-size:12px; }}
-      .v-links{{ display:flex; gap:18px; align-items:center; flex-wrap:wrap; }}
-      .v-link{{ display:flex; gap:8px; align-items:center; font-size:14px; color:var(--text); }}
-      .v-link img{{ width:20px; height:20px; }}
       .stripe{{ background:var(--strip); border:1px solid #ddd; border-radius:12px; padding:10px 12px;
                display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }}
       .pill{{ background:var(--chip); color:var(--text); border:1px solid #cfd6e1; padding:6px 12px; border-radius:999px; font-weight:800; }}
       .pct-pos{{ color:var(--good); font-weight:900; }}
       .pct-neg{{ color:var(--bad);  font-weight:900; }}
 
-      /* Metriche leggibili + label grigio scuro */
-      [data-testid="stMetric"] > div > div:nth-child(1){{ color:#333 !important; font-weight:800; }}
-      [data-testid="stMetricValue"]{{ color:var(--text) !important; font-weight:900; }}
-
-      .judge-box{{ border:2px solid #ddd; border-radius:14px; padding:12px; text-align:center; }}
-      .judge-box.good{{ border-color:var(--good); }}
-      .judge-box.bad{{  border-color:var(--bad);  }}
-      .judge-val{{ font-size:28px; font-weight:900; }}
-      .judge-val.good{{ color:var(--good); }}
-      .judge-val.bad{{  color:var(--bad);  }}
-      .judge-lbl{{ margin-top:6px; font-size:16px; font-weight:900; }}
-      .judge-lbl.good{{ color:var(--good); }}
-      .judge-lbl.bad{{  color:var(--bad);  }}
-      .judge-lbl .gstar{{ color:var(--gold); margin-left:6px; }}
+      /* blocchi metriche custom */
+      .m-label{{ color:var(--label); font-weight:800; font-size:14px; margin-bottom:4px; }}
+      .m-value{{ color:var(--text); font-weight:900; font-size:34px; line-height:1.1; }}
+      .delta-chip{{ margin-left:8px; padding:2px 8px; border-radius:999px; border:1px solid; font-weight:800; font-size:12px; }}
+      .delta-chip.pos{{ color:var(--good); border-color:var(--good); }}
+      .delta-chip.neg{{ color:var(--bad);  border-color:var(--bad);  }}
 
       .stButton>button{{ background:var(--paper); color:var(--text); border:1px solid var(--border);
                         border-radius:12px; padding:8px 14px; font-weight:800; }}
       .stButton>button:hover{{ border-color:var(--accent); }}
-
-      /* mini refresh icona accanto al prezzo */
       .mini-btn>button{{ width:44px !important; padding:6px 8px !important; border-radius:8px !important; font-weight:900 !important; }}
 
-      /* tab & dataframe testo scuro/chiaro */
+      .judge-box{{ border:2px solid #ddd; border-radius:14px; padding:12px; }}
+      .judge-val{{ font-size:28px; font-weight:900; }}
+      .judge-val.good{{ color:var(--good); }} .judge-val.bad{{ color:var(--bad); }}
+      .judge-lbl{{ margin-top:6px; font-size:16px; font-weight:900; }}
+      .judge-lbl.good{{ color:var(--good); }} .judge-lbl.bad{{ color:var(--bad); }}
+      .judge-lbl .gstar{{ color:#C79200; margin-left:6px; }}
+
       .stTabs [data-baseweb="tab"] p, .stTabs [data-baseweb="tab"] div{{ color:var(--text) !important; }}
       .stDataFrame, .stDataFrame *{{ color:var(--dftext) !important; }}
     </style>
@@ -138,9 +132,9 @@ def _letter_to_index(letter: str) -> int:
     return n-1
 
 def parse_num(s):
-    """Robusto: '1.234,56' | '1,234.56' | '75,48000336' | '75.48000336' ->  float"""
+    """Robusto: '1.234,56' | '1,234.56' | '75,48000336' | '75.48000336' -> float"""
     if s is None or s == "": return np.nan
-    if isinstance(s, (int, float)): 
+    if isinstance(s, (int, float)):
         try: return float(s)
         except: return np.nan
     s = str(s).strip().replace("\u00A0","")
@@ -254,18 +248,15 @@ def normalize_history_headers_strict():
 
 @st.cache_data(ttl=60, show_spinner=False)
 def load_history_df():
-    """Legge VALORI GREZZI dal foglio (niente casting automatico)."""
-    rows = ws_hist.get_all_values()
+    rows = ws_hist.get_all_values()  # valori grezzi, niente casting automatico
     if not rows: return pd.DataFrame()
     header, data = rows[0], rows[1:]
     df = pd.DataFrame(data, columns=header)
-    # parse numeri robusto
     if "Timestamp" in df.columns:
         df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
     for c in ["Price","EPS","BVPS","Graham","Delta","MarginPct"]:
         if c in df.columns:
             df[c] = df[c].apply(parse_num)
-    # completa Delta/Margin se mancanti
     if {"Price","Graham"}.issubset(df.columns):
         mask = df["Delta"].isna() | df["MarginPct"].isna()
         df.loc[mask, "Delta"] = (df["Price"] - df["Graham"])
@@ -398,31 +389,44 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-        # PREZZO + mini refresh a destra + GN + judge box
+        # PREZZO + ⟳ accanto + GRAHAM# + MARGINE (box)
         px = auto_price(symbol)
         pc = prev_close(symbol)
         delta_pct = None if (px is None or pc in (None,0)) else ((px - pc)/pc*100)
 
-        col_price, col_refresh, col_gn, col_judge = st.columns([1.5, 0.12, 1.1, 1.2], vertical_alignment="center")
+        col_price, col_gn, col_judge = st.columns([1.8, 1.1, 1.2], vertical_alignment="center")
         with col_price:
-            st.metric("Prezzo", ("€ " + fmt_it(px,3)) if px is not None else "n/d",
-                      (f"{delta_pct:+.2f}%" if delta_pct is not None else None))
-        with col_refresh:
-            st.markdown("<div class='mini-btn' style='display:flex;justify-content:flex-start;'>", unsafe_allow_html=True)
-            if st.button("⟳", key="refresh_now"):
-                st.cache_data.clear(); st.rerun()
-            st.markdown("</div>", unsafe_allow_html=True)
+            ip1, ip2 = st.columns([0.88, 0.12], vertical_alignment="center")
+            with ip1:
+                st.markdown(
+                    f"<div class='m-label'>Prezzo</div>"
+                    f"<div class='m-value'>€ {fmt_it(px,3) if px is not None else 'n/d'}"
+                    + (f"<span class='delta-chip {'pos' if delta_pct and delta_pct>=0 else 'neg'}'>{delta_pct:+.2f}%</span>" if delta_pct is not None else "")
+                    + "</div>", unsafe_allow_html=True
+                )
+            with ip2:
+                st.markdown("<div class='mini-btn' style='margin-top:22px;'>", unsafe_allow_html=True)
+                if st.button("⟳", key="refresh_now", help="Aggiorna quotazione"):
+                    st.cache_data.clear(); st.rerun()
+                st.markdown("</div>", unsafe_allow_html=True)
+
         with col_gn:
-            st.metric("Graham#", ("€ " + fmt_it(gn_sheet,2)) if gn_sheet is not None else "n/d")
+            st.markdown(
+                f"<div class='m-label'>Graham#</div>"
+                f"<div class='m-value'>€ {fmt_it(gn_sheet,2) if gn_sheet is not None else 'n/d'}</div>",
+                unsafe_allow_html=True
+            )
+
         with col_judge:
+            st.markdown("<div class='m-label'>Margine</div>", unsafe_allow_html=True)
             margin_pct = (1 - (px/gn_sheet))*100 if (px is not None and gn_sheet not in (None,0)) else None
             if margin_pct is None:
-                st.metric("Margine", "n/d")
+                st.markdown("<div class='v-card'>n/d</div>", unsafe_allow_html=True)
             else:
                 cls = "good" if margin_pct>0 else "bad"
                 star = " <span class='gstar'>⭐G</span>" if margin_pct >= 33 else ""
                 st.markdown(
-                    f"<div class='judge-box {cls}'>"
+                    f"<div class='judge-box'>"
                     f"<div class='judge-val {cls}'>{fmt_it(margin_pct,2)}%</div>"
                     f"<div class='judge-lbl {cls}'>{'Sottovalutata' if margin_pct>0 else 'Sopravvalutata'}{star}</div>"
                     f"</div>", unsafe_allow_html=True
@@ -465,7 +469,7 @@ else:
                                        r["EPS"], r["BVPS"], r["GN_sheet"], "App (auto)")
                 st.success("Snapshot completo salvato ✅")
 
-    # ----- TAB STORICO (parsing su valori grezzi)
+    # ----- TAB STORICO
     with tab2:
         if st.button("🧹 Normalizza intestazioni 'Storico' (A1:I1)"):
             normalize_history_headers_strict()
@@ -473,13 +477,9 @@ else:
             st.cache_data.clear(); st.rerun()
 
         dfh = load_history_df()
-
         if not dfh.empty:
-            # filtra su ticker corrente se presente
-            try:
-                current_tick = label_to_ticker[selected_label]
-            except:
-                current_tick = None
+            try: current_tick = label_to_ticker[selected_label]
+            except: current_tick = None
             dft = dfh[dfh["Ticker"].astype(str).str.upper()==(current_tick or "").upper()] if current_tick else dfh
             dft = dft.sort_values("Timestamp")
 
