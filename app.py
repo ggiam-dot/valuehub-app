@@ -19,15 +19,14 @@ FUND_TAB  = st.secrets.get("fund_tab", "Fondamentali")
 HIST_TAB  = st.secrets.get("hist_tab", "Storico")
 YF_SUFFIX = st.secrets.get("yf_suffix", ".MI")
 
-# FTSE MIB: fallback multipli
+# FTSE MIB (fallback multipli)
 MIB_SYMBOLS = [s.strip() for s in st.secrets.get(
     "mib_symbols", "^FTSEMIB,FTSEMIB.MI,FTMIB.MI,MIB.MI"
 ).split(",") if s.strip()]
 
-# Home Borsa Italiana
 BORSA_LINK = st.secrets.get("borsa_link", "https://www.borsaitaliana.it/")
 
-# Fondamentali — lettere colonna
+# colonne fondamentali
 TICKER_LETTER = st.secrets.get("ticker_col_letter", "A")
 EPS_LETTER    = st.secrets.get("eps_col_letter", "B")
 BVPS_LETTER   = st.secrets.get("bvps_col_letter", "C")
@@ -37,7 +36,9 @@ INV_URL_LETTER= st.secrets.get("investing_col_letter", "")
 MORN_URL_LETTER=st.secrets.get("morning_col_letter", "")
 ISIN_LETTER   = st.secrets.get("isin_col_letter", "")
 
-PRICE_TTL = int(st.secrets.get("price_ttl_seconds", 30))
+# refresh
+PRICE_TTL = int(st.secrets.get("price_ttl_seconds", 20))  # cache prezzo
+AUTOREFRESH_MS = int(st.secrets.get("autorefresh_ms", 20000))  # 20s
 
 st.set_page_config(page_title="Vigil – Value Investment Graham Lookup",
                    page_icon="📈", layout="wide")
@@ -58,7 +59,7 @@ def inject_theme_css(dark: bool):
     else:
         bg="#ffffff"; paper="#ffffff"; text="#151515"; sub="#4a4a4a"
         accent="#0a66ff"; border="#cfd6e1"; good="#0a7f2e"; bad="#c62828"; gold="#C79200"
-        metric_val="#111111"; metric_lab="#1f1f1f"
+        metric_val="#111"; metric_lab="#111"
         formula_bg="#e9f7ef"; formula_border="#b8e6c9"; formula_text="#0d5b2a"
         stripe_bg="#f5f7fa"; pill_bg="#eef3ff"; btn_bg="#ffffff"; btn_txt="#151515"
 
@@ -71,11 +72,11 @@ def inject_theme_css(dark: bool):
       --formula-bg:{formula_bg}; --formula-border:{formula_border}; --formula-text:{formula_text};
       --stripe-bg:{stripe_bg}; --pill-bg:{pill_bg}; --btn-bg:{btn_bg}; --btn-txt:{btn_txt};
     }}
-    .stApp {{ background-color: var(--bg); color: var(--text); }}
+    .stApp {{ background: var(--bg); color: var(--text); }}
 
-    .v-title {{ font-weight: 800; font-size: 1.36rem; line-height: 1.2; margin: 0 0 8px 0; }}
+    .v-title {{ font-weight: 800; font-size: 1.32rem; line-height: 1.2; margin: 0 0 8px; }}
     .v-title .v-title-light {{ font-weight: 700; opacity: .9; }}
-    @media (max-width: 640px) {{ .v-title {{ font-size: 1.16rem; }} }}
+    @media (max-width: 640px) {{ .v-title {{ font-size: 1.14rem; }} }}
 
     .v-card {{ background: var(--paper); border:1px solid var(--border);
                border-radius:14px; padding:12px 14px; }}
@@ -100,37 +101,29 @@ def inject_theme_css(dark: bool):
     .pct-pos {{ color: var(--good); font-weight:900; }}
     .pct-neg {{ color: var(--bad);  font-weight:900; }}
 
-    /* Metriche leggibili */
-    [data-testid="stMetric"] > div > div:nth-child(1) {{ color: var(--metric-lab) !important; font-weight:700; }}
+    /* Metriche leggibili (anche su mobile) */
+    [data-testid="stMetric"] > div > div:nth-child(1) {{ color: var(--metric-lab) !important; font-weight:800; }}
     [data-testid="stMetricValue"] {{ color: var(--metric-val) !important; font-weight:900; }}
 
-    /* Etichetta sotto il Margine */
-    .badge-under-metric {{
-      font-weight: 900; font-size: 20px; line-height: 1;
-      margin-top: -4px; text-align: center;
+    /* Judge box (Margine + giudizio in colonna) */
+    .judge-box {{
+      border:1px solid var(--border); border-radius:14px; padding:12px; text-align:center;
     }}
-    .badge-under-metric.good {{ color: var(--good); }}
-    .badge-under-metric.bad  {{ color: var(--bad);  }}
-    .badge-under-metric .gstar {{ color: var(--gold); margin-left:8px; }}
+    .judge-box.good {{ border-color: var(--good); }}
+    .judge-box.bad  {{ border-color: var(--bad);  }}
+    .judge-val {{ font-size: 28px; font-weight:900; }}
+    .judge-val.good {{ color: var(--good); }}
+    .judge-val.bad  {{ color: var(--bad); }}
+    .judge-lbl {{ margin-top:6px; font-size:16px; font-weight:900; }}
+    .judge-lbl.good {{ color: var(--good); }}
+    .judge-lbl.bad  {{ color: var(--bad);  }}
+    .judge-lbl .gstar {{ color: var(--gold); margin-left:6px; }}
 
-    /* Pulsanti Streamlit */
-    .stButton>button {{ width: 100%; background: var(--btn-bg); color: var(--btn-txt);
-        border: 1px solid var(--border); border-radius: 12px; padding: 8px 14px; font-weight: 800; }}
-    .stButton>button:hover {{ border-color: var(--accent); }}
-
-    /* Testi sempre leggibili */
-    .stTabs [data-baseweb="tab"] p,
-    .stRadio > label, 
-    .stRadio div[role="radiogroup"] label,
-    .stRadio div[role="radiogroup"] label p,
-    .stSelectbox > label,
-    .stDataFrame, .stDataFrame * {{ color: var(--text) !important; }}
-
-    /* Radio orizzontali ben spaziate */
-    [data-baseweb="radio"] > div {{ gap: 16px; }}
-
-    /* Barra controlli (posizionata tra card e metriche) */
-    .controls-bar {{ margin: 6px 0 8px 0; }}
+    /* Mini pulsante refresh vicino al prezzo */
+    .mini-btn > button {{
+      padding: 6px 8px !important; border-radius: 8px !important;
+      font-weight:800 !important;
+    }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -147,7 +140,7 @@ inject_theme_css(st.session_state.dark)
 ROME = ZoneInfo("Europe/Rome")
 def is_it_market_open(now: datetime | None = None) -> bool:
     now = now or datetime.now(ROME)
-    if now.weekday() >= 5:  # sab/dom
+    if now.weekday() >= 5:
         return False
     return dtime(9,0) <= now.time() <= dtime(17,35)
 
@@ -200,7 +193,7 @@ def fmt_it(x, dec=2):
     if x is None or (isinstance(x, float) and (np.isnan(x))): return "n/d" if dec==3 else ""
     return f"{x:,.{dec}f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# -------- Prezzi ticker
+# Prezzo intraday (o fallback)
 @st.cache_data(ttl=PRICE_TTL, show_spinner=False)
 def price_live(symbol: str):
     try:
@@ -216,30 +209,44 @@ def price_live(symbol: str):
     except: pass
     return None
 
-@st.cache_data(ttl=300, show_spinner=False)
-def price_close(symbol: str):
+# Ultima chiusura disponibile
+@st.cache_data(ttl=600, show_spinner=False)
+def last_close(symbol: str):
     try:
         t = yf.Ticker(symbol)
-        h = t.history(period="5d", interval="1d")
-        if not h.empty: return float(h["Close"].dropna().iloc[-1])
+        h = t.history(period="10d", interval="1d")["Close"].dropna()
+        if len(h)>0: return float(h.iloc[-1])
     except: pass
     return None
 
-def get_price(symbol: str, mode: str):
-    if mode == "live":  return price_live(symbol)
-    if mode == "close": return price_close(symbol)
-    return price_live(symbol) if is_it_market_open() else price_close(symbol)
+# Chiusura precedente (per delta %)
+@st.cache_data(ttl=600, show_spinner=False)
+def prev_close(symbol: str):
+    try:
+        t = yf.Ticker(symbol)
+        fi = getattr(t,"fast_info",None)
+        pc = None
+        if fi:
+            pc = fi.get("previous_close") or fi.get("regular_market_previous_close")
+        if pc: return float(pc)
+        h = t.history(period="10d", interval="1d")["Close"].dropna()
+        if len(h)>=2: return float(h.iloc[-2])
+    except: pass
+    return None
 
-# -------- FTSE MIB (fallback multipli)
+def auto_price(symbol: str):
+    return price_live(symbol) if is_it_market_open() else last_close(symbol)
+
+# FTSE MIB (stripe)
 @st.cache_data(ttl=PRICE_TTL, show_spinner=False)
 def mib_summary():
-    last_close = prev_close = live = None
+    last_c = prev_c = live = None
     for sym in MIB_SYMBOLS:
         try:
             t = yf.Ticker(sym)
             h = t.history(period="10d", interval="1d")["Close"].dropna()
-            if len(h) >= 1 and last_close is None: last_close = float(h.iloc[-1])
-            if len(h) >= 2 and prev_close is None: prev_close = float(h.iloc[-2])
+            if len(h)>=1 and last_c is None: last_c=float(h.iloc[-1])
+            if len(h)>=2 and prev_c is None: prev_c=float(h.iloc[-2])
         except: pass
     for sym in MIB_SYMBOLS:
         try:
@@ -247,11 +254,11 @@ def mib_summary():
             fi = getattr(t,"fast_info",None)
             if fi:
                 lp = fi.get("last_price")
-                if lp and lp>0: live = float(lp); break
+                if lp and lp>0: live=float(lp); break
             intr = t.history(period="1d", interval="1m")["Close"].dropna()
-            if len(intr) > 0: live = float(intr.iloc[-1]); break
+            if len(intr)>0: live=float(intr.iloc[-1]); break
         except: pass
-    return {"live": live, "last_close": last_close, "prev_close": prev_close}
+    return {"live": live, "last_close": last_c, "prev_close": prev_c}
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def company_name(symbol: str) -> str:
@@ -359,6 +366,9 @@ st.markdown(f"""
 if df.empty:
     st.warning("Nessun dato utile. Controlla il foglio.")
 else:
+    # autorefresh globale tab Analisi (ogni 20s)
+    st_autorefresh(interval=AUTOREFRESH_MS, key="auto-refresh")
+
     @st.cache_data(show_spinner=False, ttl=86400)
     def get_display_name(t: str) -> str:
         r = df[df["Ticker"]==t]
@@ -390,7 +400,7 @@ else:
         gn_applied = gn_225(eps_val, bvps_val)
         symbol = normalize_symbol(tick)
 
-        # ----- Card titolo (sopra i controlli)
+        # ----- Card titolo (sopra PREZZO/metriche)
         isin_raw = str(row.get("ISIN") or "").strip().upper()
         isin = isin_raw if ISIN_REGEX.match(isin_raw) else ""
         query_key = isin if isin else tick
@@ -418,48 +428,47 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-        # ----- BARRA CONTROLLI (sotto card, sopra le metriche)
-        st.markdown("<div class='controls-bar'></div>", unsafe_allow_html=True)
-        ctrl1, ctrl2, ctrl3 = st.columns([2.1, 0.9, 0.9])
-        with ctrl1:
-            # simbolo vicino alla parola Chiusura
-            options = {"Auto":"auto", "Intraday":"live", "Chiusura ⟳":"close"}
-            label = st.radio("Origine prezzo", list(options.keys()), horizontal=True, index=0)
-            mode = options[label]
-        with ctrl2:
-            if st.button("🔁 Refresh", help="Aggiorna ora i dati del ticker"):
-                st.cache_data.clear(); st.rerun()
-        with ctrl3:
-            auto = st.toggle("Auto 60s", value=False, help="Aggiorna automaticamente i prezzi")
-            if auto: st_autorefresh(interval=60_000, key="auto-refresh")
+        # --- PREZZO + piccolo refresh accanto + GN + judge box
+        price_val = auto_price(symbol)
+        pc = prev_close(symbol)
+        delta_pct = None if (price_val is None or pc in (None,0)) else ( (price_val - pc) / pc * 100 )
 
-        price_val = get_price(symbol, mode)
-        mode_badge = {"auto":"Auto","live":"Intraday","close":"Chiusura"}[mode]
-
-        # --- Metriche
-        margin_pct = (1 - (price_val/gn_sheet))*100 if (price_val is not None and gn_sheet not in (None,0)) else None
-        c1,c2,c3 = st.columns(3)
-        with c1: st.metric(f"Prezzo ({mode_badge})", fmt_it(price_val,3))
-        with c2: st.metric("Graham#", fmt_it(gn_sheet,2) if gn_sheet is not None else "n/d")
-        with c3:
-            if margin_pct is not None:
-                st.metric("Margine", fmt_it(margin_pct,2) + "%")
-                msg  = "Sottovalutata" if margin_pct > 0 else "Sopravvalutata"
-                css  = "good" if margin_pct > 0 else "bad"
-                star = " <span class='gstar'>⭐G</span>" if margin_pct >= 33 else ""
-                st.markdown(f"<div class='badge-under-metric {css}'>{msg}{star}</div>", unsafe_allow_html=True)
-            else:
+        col_price, col_refresh, col_gn, col_judge = st.columns([1.4, 0.18, 1.1, 1.2], vertical_alignment="bottom")
+        with col_price:
+            st.metric("Prezzo", fmt_it(price_val,3), (f"{delta_pct:+.2f}%" if delta_pct is not None else None))
+        with col_refresh:
+            with st.container():
+                st.markdown("<div class='mini-btn'>", unsafe_allow_html=True)
+                if st.button("🔁 Refresh", key="refresh_now"):
+                    st.cache_data.clear(); st.rerun()
+                st.markdown("</div>", unsafe_allow_html=True)
+        with col_gn:
+            st.metric("Graham#", fmt_it(gn_sheet,2) if gn_sheet is not None else "n/d")
+        with col_judge:
+            margin_pct = (1 - (price_val/gn_sheet))*100 if (price_val is not None and gn_sheet not in (None,0)) else None
+            if margin_pct is None:
                 st.metric("Margine", "n/d")
+            else:
+                cls = "good" if margin_pct>0 else "bad"
+                star = " <span class='gstar'>⭐G</span>" if margin_pct >= 33 else ""
+                st.markdown(
+                    f"<div class='judge-box {cls}'>"
+                    f"<div class='judge-val {cls}'>{fmt_it(margin_pct,2)}%</div>"
+                    f"<div class='judge-lbl {cls}'>{'Sottovalutata' if margin_pct>0 else 'Sopravvalutata'}{star}</div>"
+                    f"</div>", unsafe_allow_html=True
+                )
 
         # --- Formula
-        st.markdown('<div class="v-formula-title" style="color:var(--good)">The GN Formula (Applied)</div>', unsafe_allow_html=True)
+        st.markdown('<div class="v-formula-title" style="color:var(--good); margin-top:8px;">The GN Formula (Applied)</div>', unsafe_allow_html=True)
         if gn_applied is not None:
             st.markdown(
-                f"<div class='v-formula-box'><div class='v-formula-code' style='font-size:17px;'>√(22.5 × {eps_val:.4f} × {bvps_val:.4f}) = {gn_applied:.4f}</div></div>",
+                f"<div class='v-card' style='border-color:var(--formula-border); background:var(--formula-bg); color:var(--formula-text);'>"
+                f"<div style='font-family: ui-monospace, Menlo, Consolas, monospace; font-size:17px; font-weight:800;'>"
+                f"√(22.5 × {eps_val:.4f} × {bvps_val:.4f}) = {gn_applied:.4f}</div></div>",
                 unsafe_allow_html=True
             )
         else:
-            st.markdown("<div class='v-formula-box'><div class='v-formula-code'>√(22.5 × EPS × BVPS)</div></div>", unsafe_allow_html=True)
+            st.markdown("<div class='v-card'>√(22.5 × EPS × BVPS)</div>", unsafe_allow_html=True)
 
         st.markdown("---")
         is_admin = st.toggle("🛠️ Modalità amministratore", value=True)
@@ -475,7 +484,7 @@ else:
                 st.success("Graham# aggiornato."); st.cache_data.clear(); st.rerun()
             if col3.button("Salva snapshot", use_container_width=True):
                 now_str = datetime.now(ROME).strftime("%Y-%m-%d %H:%M:%S")
-                append_history_row(now_str, tick, price_val, eps_val, bvps_val, gn_sheet, f"App ({mode_badge})")
+                append_history_row(now_str, tick, price_val, eps_val, bvps_val, gn_sheet, "App (auto)")
                 st.success("Snapshot salvato.")
             if col4.button("Snapshot TUTTI", use_container_width=True):
                 now_str = datetime.now(ROME).strftime("%Y-%m-%d %H:%M:%S")
@@ -483,8 +492,8 @@ else:
                 for _,r in df.iterrows():
                     tck = str(r["Ticker"]).strip().upper()
                     if not tck: continue
-                    px = get_price(normalize_symbol(tck), mode)
-                    rows_out.append((tck, px, r["EPS"], r["BVPS"], r["GN_sheet"], f"App ({mode_badge})"))
+                    px = auto_price(normalize_symbol(tck))
+                    rows_out.append((tck, px, r["EPS"], r["BVPS"], r["GN_sheet"], "App (auto)"))
                 for rr in rows_out:
                     append_history_row(now_str, *rr)
                 st.success(f"Snapshot di {len(rows_out)} titoli salvato ✅")
