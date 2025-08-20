@@ -11,7 +11,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 from streamlit_autorefresh import st_autorefresh
 
-# ============== CONFIG ==============
+# ================== CONFIG ==================
 SHEET_ID  = st.secrets.get("google_sheet_id")
 FUND_TAB  = st.secrets.get("fund_tab", "Fondamentali")
 HIST_TAB  = st.secrets.get("hist_tab", "Storico")
@@ -34,10 +34,12 @@ ISIN_LETTER   = st.secrets.get("isin_col_letter", "")
 PRICE_TTL = int(st.secrets.get("price_ttl_seconds", 20))
 AUTOREFRESH_MS = int(st.secrets.get("autorefresh_ms", 15000))  # 15s
 
-st.set_page_config(page_title="Vigil – Value Investment Graham Lookup",
-                   page_icon="📈", layout="wide")
+APP_SECTION = st.secrets.get("app", {})
+ADMIN_CODE  = APP_SECTION.get("admin_code") or st.secrets.get("admin_code", "")
 
-# ============== THEME/CSS ==============
+st.set_page_config(page_title="Virgil – Value Investing", page_icon="👁️", layout="wide")
+
+# ================== THEME / CSS ==================
 if "dark" not in st.session_state:
     st.session_state.dark = False
 
@@ -46,10 +48,12 @@ def inject_css(dark: bool):
         bg="#0b0f16"; paper="#131a24"; text="#f3f7fb"; sub="#c6cfdb"; border="#2a3340"
         good="#0abf53"; bad="#ff4d4f"; gold="#FFD166"; accent="#66b1ff"
         chip="#1b2432"; strip="#0f1320"; df_text="#f3f7fb"; label="#e2e8f5"
+        formula_border="#1f6f46"
     else:
         bg="#ffffff"; paper="#ffffff"; text="#151515"; sub="#4a4a4a"; border="#222"
         good="#0a7f2e"; bad="#c62828"; gold="#C79200"; accent="#0a66ff"
         chip="#eef3ff"; strip="#f7f9fc"; df_text="#111"; label="#333"
+        formula_border="#b8e6c9"
 
     st.markdown(f"""
     <style>
@@ -57,10 +61,15 @@ def inject_css(dark: bool):
         --bg:{bg}; --paper:{paper}; --text:{text}; --sub:{sub}; --border:{border};
         --good:{good}; --bad:{bad}; --gold:{gold}; --accent:{accent};
         --chip:{chip}; --strip:{strip}; --dftext:{df_text}; --label:{label};
+        --formula-border:{formula_border};
       }}
       .stApp{{ background:var(--bg); color:var(--text); }}
-      .v-title{{ font-weight:800; font-size:1.28rem; margin:0 0 8px; }}
-      .v-title .v-light{{ font-weight:700; }}
+
+      /* BRAND */
+      .brand-title{{ font-weight:900; font-size:1.9rem; letter-spacing:.5px; display:flex; gap:10px; align-items:center; }}
+      .brand-sub{{ font-weight:700; color:var(--label); margin-top:2px; }}
+      .brand-quote{{ font-style:italic; color:var(--sub); margin-top:4px; font-family: Georgia, 'Times New Roman', serif; }}
+
       .v-card{{ background:var(--paper); border:1px solid #ddd; border-radius:14px; padding:12px 14px; }}
       .v-sub{{ color:var(--sub); font-size:12px; }}
 
@@ -70,24 +79,23 @@ def inject_css(dark: bool):
       .pct-pos{{ color:var(--good); font-weight:900; }}
       .pct-neg{{ color:var(--bad);  font-weight:900; }}
 
-      /* link esterni (icone ridotte e armoniche) */
+      /* link esterni (icone piccole) */
       .v-links{{ display:flex; gap:14px; align-items:center; flex-wrap:wrap; }}
       .v-link{{ display:inline-flex; gap:6px; align-items:center; font-size:14px; }}
       .v-link img{{ width:18px; height:18px; border-radius:4px; }}
 
       /* blocchi metriche */
-      .m-label{{ color:var(--label); font-weight:800; font-size:14px; margin-bottom:4px; }}
+      .m-label-row{{ display:flex; align-items:center; gap:6px; }}
+      .m-label{{ color:var(--label); font-weight:800; font-size:14px; }}
+      .ghost-btn>button{{ background:transparent !important; border:none !important;
+                          box-shadow:none !important; color:var(--label) !important;
+                          width:auto !important; height:auto !important; padding:0 4px !important;
+                          font-weight:900 !important; font-size:16px !important; }}
       .m-row{{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }}
       .m-value{{ color:var(--text); font-weight:900; font-size:34px; line-height:1.1; }}
       .delta-chip{{ padding:2px 8px; border-radius:999px; border:1px solid; font-weight:800; font-size:12px; }}
       .delta-chip.pos{{ color:var(--good); border-color:var(--good); }}
       .delta-chip.neg{{ color:var(--bad);  border-color:var(--bad);  }}
-      .mini-btn>button{{ width:28px !important; height:28px !important; padding:0 !important;
-                         border-radius:6px !important; font-weight:900 !important; }}
-
-      .stButton>button{{ background:var(--paper); color:var(--text); border:1px solid var(--border);
-                        border-radius:12px; padding:8px 14px; font-weight:800; }}
-      .stButton>button:hover{{ border-color:var(--accent); }}
 
       .judge-box{{ border:2px solid #ddd; border-radius:14px; padding:12px; }}
       .judge-val{{ font-size:28px; font-weight:900; }}
@@ -96,19 +104,45 @@ def inject_css(dark: bool):
       .judge-lbl.good{{ color:var(--good); }} .judge-lbl.bad{{ color:var(--bad); }}
       .judge-lbl .gstar{{ color:#C79200; margin-left:6px; }}
 
+      /* formula: sfondo TRASPARENTE, solo bordo */
+      .formula-box{{ border:1px dashed var(--formula-border); background:transparent;
+                     border-radius:12px; padding:12px 14px; }}
+      .formula-code{{ font-family: ui-monospace, Menlo, Consolas, monospace; font-size:17px; font-weight:800; }}
+
+      .stButton>button{{ background:var(--paper); color:var(--text); border:1px solid var(--border);
+                         border-radius:12px; padding:8px 14px; font-weight:800; }}
+      .stButton>button:hover{{ border-color:var(--accent); }}
+
       .stTabs [data-baseweb="tab"] p, .stTabs [data-baseweb="tab"] div{{ color:var(--text) !important; }}
       .stDataFrame, .stDataFrame *{{ color:var(--dftext) !important; }}
     </style>
     """, unsafe_allow_html=True)
 
-hdr_l, hdr_r = st.columns([4,1], vertical_alignment="center")
-with hdr_l:
-    st.markdown("<div class='v-title'>📈 Vigil – Value Investment Graham <span class='v-light'>(Intelligent)</span> Lookup</div>", unsafe_allow_html=True)
-with hdr_r:
-    st.session_state.dark = st.toggle("🌙 Dark", value=st.session_state.dark)
+# HEADER (brand + dark toggle + admin gate in sidebar)
+col_left, col_right = st.columns([6,1], vertical_alignment="center")
+with col_left:
+    st.markdown(
+        "<div class='brand-title'>👁️ Virgil</div>"
+        "<div class='brand-sub'>Value Investing – Graham (Intelligent) Lookup</div>"
+        "<div class='brand-quote'>&ldquo;Price is what you pay. Value is what you get.&rdquo; — W.B.</div>",
+        unsafe_allow_html=True
+    )
+with col_right:
+    st.session_state.dark = st.toggle("Dark", value=st.session_state.dark, help="Tema scuro/chiaro")
+
 inject_css(st.session_state.dark)
 
-# ============== TIME/AUTH ==============
+# Sidebar → attivazione Admin con codice
+with st.sidebar:
+    st.markdown("### 🔐 Amministrazione")
+    code = st.text_input("Admin code", type="password", help="Inserisci il codice per abilitare i comandi admin")
+    is_admin = bool(ADMIN_CODE) and (code == ADMIN_CODE)
+    if is_admin:
+        st.success("Admin attivo")
+    else:
+        st.info("Modalità pubblica")
+
+# ================== TIME / AUTH ==================
 ROME = ZoneInfo("Europe/Rome")
 def market_open(now=None):
     now = now or datetime.now(ROME)
@@ -128,7 +162,7 @@ sh = gc.open_by_key(SHEET_ID)
 ws_fund = sh.worksheet(FUND_TAB)
 ws_hist = sh.worksheet(HIST_TAB)
 
-# ============== UTILS ==============
+# ================== UTILS ==================
 ISIN_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{10}$")
 
 def _letter_to_index(letter: str) -> int:
@@ -237,6 +271,7 @@ def gn_225(eps,bvps):
     if eps and bvps and eps>0 and bvps>0: return sqrt(22.5*eps*bvps)
     return None
 
+# Storico
 DESIRED_HIST_HEADER = ["Timestamp","Ticker","Price","EPS","BVPS","Graham","Delta","MarginPct","Fonte"]
 
 def ensure_history_headers():
@@ -284,6 +319,7 @@ def append_history_row(ts, ticker, price, eps, bvps, graham, fonte="App"):
            fonte]
     ws_hist.append_row(row, value_input_option="USER_ENTERED")
 
+# ================== LOAD E UI ==================
 @st.cache_data(show_spinner=False)
 def load_fundamentals_by_letter():
     values = ws_fund.get_all_values()
@@ -315,7 +351,6 @@ def load_fundamentals_by_letter():
     df["ISIN"]         = (df["ISIN_raw"].astype(str).str.strip() if isinstance(df["ISIN_raw"], pd.Series) else "")
     return df, {}
 
-# ============== UI ==============
 df, _ = load_fundamentals_by_letter()
 
 # FTSE MIB stripe
@@ -340,7 +375,7 @@ st.markdown(f"""
 if df.empty:
     st.warning("Nessun dato utile. Controlla il foglio.")
 else:
-    st_autorefresh(interval=AUTOREFRESH_MS, key="auto-refresh")  # auto refresh 15s
+    st_autorefresh(interval=AUTOREFRESH_MS, key="auto-refresh")  # auto-refresh 15s
 
     @st.cache_data(show_spinner=False, ttl=86400)
     def display_name(t: str) -> str:
@@ -357,7 +392,7 @@ else:
     label_to_ticker = { (f"{t} — {display_name(t)}" if display_name(t) else t): t for t in tickers_all }
     tab1, tab2 = st.tabs(["📊 Analisi", "📜 Storico"])
 
-    # ----- TAB ANALISI
+    # ----- ANALISI
     with tab1:
         selected_label = st.selectbox("Scegli il Ticker", options=list(label_to_ticker.keys()), index=0)
         tick = label_to_ticker[selected_label]
@@ -393,32 +428,27 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-        # PREZZO + GRAHAM# + MARGINE (mini refresh accanto alla %)
+        # --- PREZZO + GRAHAM + MARGINE
         px = auto_price(symbol)
         pc = prev_close(symbol)
         delta_pct = None if (px is None or pc in (None,0)) else ((px - pc)/pc*100)
 
         col_price, col_gn, col_judge = st.columns([1.8, 1.1, 1.2], vertical_alignment="center")
         with col_price:
-            row_html = (
-                f"<div class='m-label'>Prezzo</div>"
-                f"<div class='m-row'><div class='m-value'>€ {fmt_it(px,3) if px is not None else 'n/d'}</div>"
-                + (f"<span class='delta-chip {'pos' if delta_pct and delta_pct>=0 else 'neg'}'>{delta_pct:+.2f}%</span>" if delta_pct is not None else "")
-                + "</div>"
-            )
-            st.markdown(row_html, unsafe_allow_html=True)
-            # piccolo tasto accanto alla riga (sotto forma di pulsante compatto)
-            st.markdown("<div class='mini-btn'>", unsafe_allow_html=True)
+            # etichetta "Prezzo" + mini refresh (solo simbolo) accanto ALLA PAROLA
+            st.markdown("<div class='m-label-row'><div class='m-label'>Prezzo</div>", unsafe_allow_html=True)
+            st.markdown("<div class='ghost-btn'>", unsafe_allow_html=True)
             if st.button("⟳", key="mini_refresh", help="Aggiorna ora"):
                 st.cache_data.clear(); st.rerun()
-            st.markdown("</div>", unsafe_allow_html=True)
-
-        with col_gn:
+            st.markdown("</div></div>", unsafe_allow_html=True)
             st.markdown(
-                f"<div class='m-label'>Graham#</div>"
-                f"<div class='m-value'>€ {fmt_it(gn_sheet,2) if gn_sheet is not None else 'n/d'}</div>",
-                unsafe_allow_html=True
+                f"<div class='m-row'><div class='m-value'>€ {fmt_it(px,3) if px is not None else 'n/d'}</div>"
+                + (f"<span class='delta-chip {'pos' if delta_pct and delta_pct>=0 else 'neg'}'>{delta_pct:+.2f}%</span>" if delta_pct is not None else "")
+                + "</div>", unsafe_allow_html=True
             )
+        with col_gn:
+            st.markdown("<div class='m-label'>Graham#</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='m-value'>€ {fmt_it(gn_sheet,2) if gn_sheet is not None else 'n/d'}</div>", unsafe_allow_html=True)
 
         with col_judge:
             st.markdown("<div class='m-label'>Margine</div>", unsafe_allow_html=True)
@@ -435,20 +465,20 @@ else:
                     f"</div>", unsafe_allow_html=True
                 )
 
-        # Formula
+        # --- Formula (trasparente)
         st.markdown("<div style='margin-top:8px;font-weight:800;color:var(--good)'>The GN Formula (Applied)</div>", unsafe_allow_html=True)
         if gn_applied is not None:
             st.markdown(
-                f"<div class='v-card' style='background:#e9f7ef;border-color:#b8e6c9;'>"
-                f"<div style='font-family: ui-monospace, Menlo, Consolas, monospace; font-size:17px; font-weight:800;'>"
+                f"<div class='formula-box'><div class='formula-code'>"
                 f"√(22.5 × {eps_val:.4f} × {bvps_val:.4f}) = {gn_applied:.4f}</div></div>",
                 unsafe_allow_html=True
             )
         else:
-            st.markdown("<div class='v-card'>√(22.5 × EPS × BVPS)</div>", unsafe_allow_html=True)
+            st.markdown("<div class='formula-box'><div class='formula-code'>√(22.5 × EPS × BVPS)</div></div>", unsafe_allow_html=True)
 
         st.markdown("---")
-        is_admin = st.toggle("🛠️ Modalità amministratore", value=True)
+
+        # --- Comandi amministratore (visibili solo se is_admin)
         if is_admin:
             c1,c2,c3,c4 = st.columns(4)
             if c1.button("Aggiorna dal foglio", use_container_width=True):
@@ -472,9 +502,10 @@ else:
                                        r["EPS"], r["BVPS"], r["GN_sheet"], "App (auto)")
                 st.success("Snapshot completo salvato ✅")
 
-    # ----- TAB STORICO
+    # ----- STORICO
     with tab2:
-        if st.button("🧹 Normalizza intestazioni 'Storico' (A1:I1)"):
+        # il pulsante "Normalizza intestazioni" solo per admin
+        if is_admin and st.button("🧹 Normalizza intestazioni 'Storico' (A1:I1)"):
             normalize_history_headers_strict()
             st.success("Header normalizzato. Ricarico…")
             st.cache_data.clear(); st.rerun()
