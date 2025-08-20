@@ -32,12 +32,12 @@ MORN_URL_LETTER=st.secrets.get("morning_col_letter", "")
 ISIN_LETTER   = st.secrets.get("isin_col_letter", "")
 
 PRICE_TTL = int(st.secrets.get("price_ttl_seconds", 20))
-AUTOREFRESH_MS = int(st.secrets.get("autorefresh_ms", 15000))  # 15s di default
+AUTOREFRESH_MS = int(st.secrets.get("autorefresh_ms", 15000))  # 15s
 
 st.set_page_config(page_title="Vigil – Value Investment Graham Lookup",
                    page_icon="📈", layout="wide")
 
-# ============== THEME/CSS (chiaro + dark) ==============
+# ============== THEME/CSS ==============
 if "dark" not in st.session_state:
     st.session_state.dark = False
 
@@ -63,18 +63,27 @@ def inject_css(dark: bool):
       .v-title .v-light{{ font-weight:700; }}
       .v-card{{ background:var(--paper); border:1px solid #ddd; border-radius:14px; padding:12px 14px; }}
       .v-sub{{ color:var(--sub); font-size:12px; }}
+
       .stripe{{ background:var(--strip); border:1px solid #ddd; border-radius:12px; padding:10px 12px;
                display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }}
       .pill{{ background:var(--chip); color:var(--text); border:1px solid #cfd6e1; padding:6px 12px; border-radius:999px; font-weight:800; }}
       .pct-pos{{ color:var(--good); font-weight:900; }}
       .pct-neg{{ color:var(--bad);  font-weight:900; }}
 
-      /* blocchi metriche custom */
+      /* link esterni (icone ridotte e armoniche) */
+      .v-links{{ display:flex; gap:14px; align-items:center; flex-wrap:wrap; }}
+      .v-link{{ display:inline-flex; gap:6px; align-items:center; font-size:14px; }}
+      .v-link img{{ width:18px; height:18px; border-radius:4px; }}
+
+      /* blocchi metriche */
       .m-label{{ color:var(--label); font-weight:800; font-size:14px; margin-bottom:4px; }}
+      .m-row{{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }}
       .m-value{{ color:var(--text); font-weight:900; font-size:34px; line-height:1.1; }}
-      .delta-chip{{ margin-left:8px; padding:2px 8px; border-radius:999px; border:1px solid; font-weight:800; font-size:12px; }}
+      .delta-chip{{ padding:2px 8px; border-radius:999px; border:1px solid; font-weight:800; font-size:12px; }}
       .delta-chip.pos{{ color:var(--good); border-color:var(--good); }}
       .delta-chip.neg{{ color:var(--bad);  border-color:var(--bad);  }}
+      .mini-btn>button{{ width:28px !important; height:28px !important; padding:0 !important;
+                         border-radius:6px !important; font-weight:900 !important; }}
 
       .stButton>button{{ background:var(--paper); color:var(--text); border:1px solid var(--border);
                         border-radius:12px; padding:8px 14px; font-weight:800; }}
@@ -131,7 +140,6 @@ def _letter_to_index(letter: str) -> int:
     return n-1
 
 def parse_num(s):
-    """Robusto per '1.234,56' | '1,234.56' | '75,48000336' | '75.48000336'."""
     if s is None or s == "": return np.nan
     if isinstance(s, (int, float)):
         try: return float(s)
@@ -160,7 +168,6 @@ def fmt_it(x, dec=2):
     if x is None or (isinstance(x,float) and np.isnan(x)): return "n/d" if dec==3 else ""
     return f"{x:,.{dec}f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# Prezzi
 @st.cache_data(ttl=PRICE_TTL, show_spinner=False)
 def price_live(symbol: str):
     try:
@@ -230,7 +237,6 @@ def gn_225(eps,bvps):
     if eps and bvps and eps>0 and bvps>0: return sqrt(22.5*eps*bvps)
     return None
 
-# Storico helpers
 DESIRED_HIST_HEADER = ["Timestamp","Ticker","Price","EPS","BVPS","Graham","Delta","MarginPct","Fonte"]
 
 def ensure_history_headers():
@@ -247,7 +253,7 @@ def normalize_history_headers_strict():
 
 @st.cache_data(ttl=60, show_spinner=False)
 def load_history_df():
-    rows = ws_hist.get_all_values()  # valori grezzi
+    rows = ws_hist.get_all_values()
     if not rows: return pd.DataFrame()
     header, data = rows[0], rows[1:]
     df = pd.DataFrame(data, columns=header)
@@ -278,7 +284,6 @@ def append_history_row(ts, ticker, price, eps, bvps, graham, fonte="App"):
            fonte]
     ws_hist.append_row(row, value_input_option="USER_ENTERED")
 
-# ============== LOAD FONDAMENTALI ==============
 @st.cache_data(show_spinner=False)
 def load_fundamentals_by_letter():
     values = ws_fund.get_all_values()
@@ -388,25 +393,33 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-        # PREZZO + GRAHAM# + MARGINE (box) — senza bottone refresh
+        # PREZZO + GRAHAM# + MARGINE (mini refresh accanto alla %)
         px = auto_price(symbol)
         pc = prev_close(symbol)
         delta_pct = None if (px is None or pc in (None,0)) else ((px - pc)/pc*100)
 
         col_price, col_gn, col_judge = st.columns([1.8, 1.1, 1.2], vertical_alignment="center")
         with col_price:
-            st.markdown(
+            row_html = (
                 f"<div class='m-label'>Prezzo</div>"
-                f"<div class='m-value'>€ {fmt_it(px,3) if px is not None else 'n/d'}"
+                f"<div class='m-row'><div class='m-value'>€ {fmt_it(px,3) if px is not None else 'n/d'}</div>"
                 + (f"<span class='delta-chip {'pos' if delta_pct and delta_pct>=0 else 'neg'}'>{delta_pct:+.2f}%</span>" if delta_pct is not None else "")
-                + "</div>", unsafe_allow_html=True
+                + "</div>"
             )
+            st.markdown(row_html, unsafe_allow_html=True)
+            # piccolo tasto accanto alla riga (sotto forma di pulsante compatto)
+            st.markdown("<div class='mini-btn'>", unsafe_allow_html=True)
+            if st.button("⟳", key="mini_refresh", help="Aggiorna ora"):
+                st.cache_data.clear(); st.rerun()
+            st.markdown("</div>", unsafe_allow_html=True)
+
         with col_gn:
             st.markdown(
                 f"<div class='m-label'>Graham#</div>"
                 f"<div class='m-value'>€ {fmt_it(gn_sheet,2) if gn_sheet is not None else 'n/d'}</div>",
                 unsafe_allow_html=True
             )
+
         with col_judge:
             st.markdown("<div class='m-label'>Margine</div>", unsafe_allow_html=True)
             margin_pct = (1 - (px/gn_sheet))*100 if (px is not None and gn_sheet not in (None,0)) else None
