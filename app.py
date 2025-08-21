@@ -5,11 +5,20 @@ import yfinance as yf
 from math import sqrt, isfinite
 from datetime import datetime, date, time as dtime
 from zoneinfo import ZoneInfo
-import json, re
+import json, re, time
 
 import gspread
 from google.oauth2.service_account import Credentials
-from streamlit_autorefresh import st_autorefresh
+
+# opzionale: autorefresh se disponibile
+try:
+    from streamlit_autorefresh import st_autorefresh
+    def do_autorefresh(ms): 
+        try: st_autorefresh(interval=ms, key="auto-refresh")
+        except: pass
+except Exception:
+    def do_autorefresh(ms): 
+        pass
 
 # ================== CONFIG ==================
 SHEET_ID  = st.secrets.get("google_sheet_id")
@@ -56,91 +65,96 @@ def inject_css(dark: bool):
         formula_border="#b8e6c9"; eye="#2d4864"
 
     st.markdown(f"""
-    <style>
-      :root {{
-        --bg:{bg}; --paper:{paper}; --text:{text}; --sub:{sub}; --border:{border};
-        --good:{good}; --bad:{bad}; --gold:{gold}; --accent:{accent};
-        --chip:{chip}; --strip:{strip}; --dftext:{df_text}; --label:{label};
-        --formula-border:{formula_border}; --eye:{eye};
-      }}
-      .stApp{{ background:var(--bg); color:var(--text); }}
+<style>
+:root {{
+  --bg:{bg}; --paper:{paper}; --text:{text}; --sub:{sub}; --border:{border};
+  --good:{good}; --bad:{bad}; --gold:{gold}; --accent:{accent};
+  --chip:{chip}; --strip:{strip}; --dftext:{df_text}; --label:{label};
+  --formula-border:{formula_border}; --eye:{eye};
+}}
+.stApp{{ background:var(--bg); color:var(--text); }}
 
-      /* BRAND */
-      .brand-wrap{{ display:flex; align-items:flex-start; gap:12px; }}
-      .brand-eye{{ width:32px; height:32px; margin-top:2px; }}
-      .brand-title-text{{ font-weight:900; font-size:2.0rem; letter-spacing:.6px; line-height:1.1; }}
-      .brand-sub{{ font-weight:700; color:var(--label); margin-top:2px; }}
-      .brand-quote{{ font-style:italic; color:var(--sub); margin-top:4px; font-family: Georgia, 'Times New Roman', serif; }}
+/* BRAND */
+.brand-wrap{{ display:flex; align-items:flex-start; gap:12px; }}
+.brand-eye{{ width:26px; height:26px; margin-top:4px; }}
+.brand-title-text{{ font-weight:900; font-size:2.0rem; letter-spacing:.6px; line-height:1.1; }}
+.brand-sub{{ font-weight:700; color:var(--label); margin-top:2px; }}
+.brand-quote{{ font-style:italic; color:var(--sub); margin-top:4px; font-family: Georgia, 'Times New Roman', serif; }}
 
-      .v-card{{ background:var(--paper); border:1px solid #ddd; border-radius:14px; padding:12px 14px; }}
-      .v-sub{{ color:var(--sub); font-size:12px; }}
+/* cards / links */
+.v-card{{ background:var(--paper); border:1px solid #ddd; border-radius:14px; padding:12px 14px; }}
+.v-sub{{ color:var(--sub); font-size:12px; }}
+.v-links{{ display:flex; gap:14px; align-items:center; flex-wrap:wrap; }}
+.v-link{{ display:inline-flex; gap:6px; align-items:center; font-size:14px; }}
+.v-link img{{ width:16px; height:16px; border-radius:4px; }}  /* icone piccole */
 
-      .stripe{{ background:var(--strip); border:1px solid #ddd; border-radius:12px; padding:10px 12px;
-               display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }}
-      .pill{{ background:var(--chip); color:var(--text); border:1px solid #cfd6e1; padding:6px 12px; border-radius:999px; font-weight:800; }}
-      .pct-pos{{ color:var(--good); font-weight:900; }}
-      .pct-neg{{ color:var(--bad);  font-weight:900; }}
+/* stripe FTSE MIB */
+.stripe{{ background:var(--strip); border:1px solid #ddd; border-radius:12px; padding:10px 12px;
+         display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }}
+.pill{{ background:var(--chip); color:var(--text); border:1px solid #cfd6e1; padding:6px 12px; border-radius:999px; font-weight:800; }}
+.pct-pos{{ color:var(--good); font-weight:900; }}
+.pct-neg{{ color:var(--bad);  font-weight:900; }}
 
-      .v-links{{ display:flex; gap:14px; align-items:center; flex-wrap:wrap; }}
-      .v-link{{ display:inline-flex; gap:6px; align-items:center; font-size:14px; }}
-      .v-link img{{ width:18px; height:18px; border-radius:4px; }}
+/* metriche */
+.m-label{{ color:var(--label); font-weight:800; font-size:14px; }}
+.m-row{{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }}
+.m-value{{ color:var(--text); font-weight:900; font-size:34px; line-height:1.1; }}
+.delta-chip{{ padding:2px 8px; border-radius:999px; border:1px solid; font-weight:800; font-size:12px; }}
+.delta-chip.pos{{ color:var(--good); border-color:var(--good); }}
+.delta-chip.neg{{ color:var(--bad);  border-color:var(--bad);  }}
 
-      .m-label{{ color:var(--label); font-weight:800; font-size:14px; }}
-      .m-row{{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }}
-      .m-value{{ color:var(--text); font-weight:900; font-size:34px; line-height:1.1; }}
-      .delta-chip{{ padding:2px 8px; border-radius:999px; border:1px solid; font-weight:800; font-size:12px; }}
-      .delta-chip.pos{{ color:var(--good); border-color:var(--good); }}
-      .delta-chip.neg{{ color:var(--bad);  border-color:var(--bad);  }}
+/* giudizio */
+.judge-box{{ border:2px solid #ddd; border-radius:14px; padding:12px; }}
+.judge-val{{ font-size:28px; font-weight:900; }}
+.judge-val.good{{ color:var(--good); }} .judge-val.bad{{ color:var(--bad); }}
+.judge-lbl{{ margin-top:6px; font-size:16px; font-weight:900; }}
+.judge-lbl.good{{ color:var(--good); }} .judge-lbl.bad{{ color:var(--bad); }}
+.judge-lbl .gstar{{ color:#C79200; margin-left:6px; }}
 
-      .judge-box{{ border:2px solid #ddd; border-radius:14px; padding:12px; }}
-      .judge-val{{ font-size:28px; font-weight:900; }}
-      .judge-val.good{{ color:var(--good); }} .judge-val.bad{{ color:var(--bad); }}
-      .judge-lbl{{ margin-top:6px; font-size:16px; font-weight:900; }}
-      .judge-lbl.good{{ color:var(--good); }} .judge-lbl.bad{{ color:var(--bad); }}
-      .judge-lbl .gstar{{ color:#C79200; margin-left:6px; }}
+/* formula: trasparente (no overlay bianco) */
+.formula-box{{ border:1px dashed var(--formula-border); background:transparent;
+               border-radius:12px; padding:12px 14px; }}
+.formula-code{{ font-family: ui-monospace, Menlo, Consolas, monospace; font-size:17px; font-weight:800; }}
 
-      .formula-box{{ border:1px dashed var(--formula-border); background:transparent;
-                     border-radius:12px; padding:12px 14px; }}
-      .formula-code{{ font-family: ui-monospace, Menlo, Consolas, monospace; font-size:17px; font-weight:800; }}
+/* pulsanti */
+.stButton>button{{ background:var(--paper); color:var(--text); border:1px solid var(--border);
+                   border-radius:12px; padding:8px 14px; font-weight:800; }}
+.stButton>button:hover{{ border-color:var(--accent); }}
 
-      .stButton>button{{ background:var(--paper); color:var(--text); border:1px solid var(--border);
-                         border-radius:12px; padding:8px 14px; font-weight:800; }}
-      .stButton>button:hover{{ border-color:var(--accent); }}
-
-      .stTabs [data-baseweb="tab"] p, .stTabs [data-baseweb="tab"] div{{ color:var(--text) !important; }}
-      .stDataFrame, .stDataFrame *{{ color:var(--dftext) !important; }}
-    </style>
-    """, unsafe_allow_html=True)
+/* testi tab e dataframe */
+.stTabs [data-baseweb="tab"] p, .stTabs [data-baseweb="tab"] div{{ color:var(--text) !important; }}
+.stDataFrame, .stDataFrame *{{ color:var(--dftext) !important; }}
+</style>
+""", unsafe_allow_html=True)
 
 # ====== HEADER ======
 col_left, col_right = st.columns([6,1], vertical_alignment="center")
-
 with col_left:
-    eye_svg = """... (lascia identico il tuo SVG che funzionava) ..."""
+    eye_svg = (
+        "<svg class='brand-eye' viewBox='0 0 64 32' xmlns='http://www.w3.org/2000/svg' aria-hidden='true'>"
+        "<path fill='var(--eye)' d='M32 0C18 0 7.1 7.7 2 16c5.1 8.3 16 16 30 16s24.9-7.7 30-16C56.9 7.7 46 0 32 0zm0 26a10 10 0 110-20 10 10 0 010 20z'/>"
+        "<circle cx='32' cy='16' r='6' fill='var(--bg)'/></svg>"
+    )
     st.markdown(
-        f"""
-        <div class='brand-wrap'>
-          {eye_svg}
-          <div>
-            <div class='brand-title-text'>VIGIL</div>   <!-- QUI: VIGIL -->
-            <div class='brand-sub'>Value Investing – Graham (Intelligent) Lookup</div>
-            <div class='brand-quote'>&ldquo;Price is what you pay. Value is what you get.&rdquo; — W.B.</div>
-          </div>
-        </div>
-        """,
+        "<div class='brand-wrap'>"
+        f"{eye_svg}"
+        "<div>"
+        "<div class='brand-title-text'>VIGIL</div>"
+        "<div class='brand-sub'>Value Investing – Graham (Intelligent) Lookup</div>"
+        "<div class='brand-quote'>&ldquo;Price is what you pay. Value is what you get.&rdquo; — W.B.</div>"
+        "</div></div>",
         unsafe_allow_html=True
     )
-
 with col_right:
     st.session_state.dark = st.toggle("Dark", value=st.session_state.dark, help="Tema scuro/chiaro")
 
-
+inject_css(st.session_state.dark)
 
 # ====== ADMIN (sidebar) ======
 with st.sidebar:
     if ADMIN_CODE:
         st.markdown("### 🔐 Amministrazione")
-        code = st.text_input("Admin code", type="password", help="Inserisci il codice per sbloccare i comandi admin")
+        code = st.text_input("Admin code", type="password")
         is_admin = (code == ADMIN_CODE)
         st.success("Admin attivo") if is_admin else st.info("Modalità pubblica")
     else:
@@ -153,7 +167,6 @@ def market_open(now=None):
     return now.weekday() < 5 and dtime(9,0) <= now.time() <= dtime(17,35)
 
 def should_autorefresh(now=None):
-    """Attivo solo giorni feriali 08:59–17:35 (Rome)."""
     now = now or datetime.now(ROME)
     return (now.weekday() < 5) and (dtime(8,59) <= now.time() <= dtime(17,35))
 
@@ -172,8 +185,6 @@ ws_fund = sh.worksheet(FUND_TAB)
 ws_hist = sh.worksheet(HIST_TAB)
 
 # ================== UTILS ==================
-ISIN_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{10}$")
-
 def _letter_to_index(letter: str) -> int:
     if not letter: return -1
     s = letter.strip().upper(); n=0
@@ -292,9 +303,6 @@ def ensure_history_headers():
         if col not in header: header.append(col); changed=True
     if changed: ws_hist.update("A1:I1", [header], value_input_option="USER_ENTERED")
 
-def normalize_history_headers_strict():
-    ws_hist.update("A1:I1", [DESIRED_HIST_HEADER], value_input_option="USER_ENTERED")
-
 @st.cache_data(ttl=60, show_spinner=False)
 def load_history_df():
     rows = ws_hist.get_all_values()
@@ -328,7 +336,7 @@ def append_history_row(ts, ticker, price, eps, bvps, graham, fonte="App"):
            fonte]
     ws_hist.append_row(row, value_input_option="USER_ENTERED")
 
-# ================== LOAD E UI ==================
+# ================== LOAD + UI ==================
 @st.cache_data(show_spinner=False)
 def load_fundamentals_by_letter():
     values = ws_fund.get_all_values()
@@ -362,7 +370,7 @@ def load_fundamentals_by_letter():
 
 df, _ = load_fundamentals_by_letter()
 
-# FTSE MIB stripe
+# ----- FTSE MIB stripe -----
 mib = mib_summary()
 open_now = market_open()
 main_val = mib["live"] if (open_now and mib["live"] is not None) else mib["last_close"]
@@ -383,7 +391,7 @@ st.markdown(f"""
 
 # Auto-refresh solo in orario di mercato (08:59–17:35)
 if should_autorefresh():
-    st_autorefresh(interval=AUTOREFRESH_MS, key="auto-refresh")
+    do_autorefresh(AUTOREFRESH_MS)
 else:
     st.info("⏸️ Auto-refresh sospeso (mercato chiuso).")
 
@@ -402,12 +410,18 @@ else:
         except: return ""
 
     tickers_all = sorted(df["Ticker"].tolist())
-    label_to_ticker = { (f"{t} — {display_name(t)}" if display_name(t) else t): t for t in tickers_all }
+    labels = []
+    label_to_ticker = {}
+    for t in tickers_all:
+        nm = display_name(t)
+        lab = f"{t} — {nm}" if nm else t
+        labels.append(lab); label_to_ticker[lab]=t
+
     tab1, tab2 = st.tabs(["📊 Analisi", "📜 Storico"])
 
     # ----- ANALISI
     with tab1:
-        selected_label = st.selectbox("Scegli il Ticker", options=list(label_to_ticker.keys()), index=0)
+        selected_label = st.selectbox("Scegli il Ticker", options=labels, index=0)
         tick = label_to_ticker[selected_label]
         row = df[df["Ticker"]==tick].iloc[0]
         eps_val, bvps_val, gn_sheet = row["EPS"], row["BVPS"], row["GN_sheet"]
@@ -415,33 +429,29 @@ else:
         symbol = normalize_symbol(tick)
 
         isin_raw = str(row.get("ISIN") or "").strip().upper()
+        ISIN_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{10}$")
         isin = isin_raw if ISIN_RE.match(isin_raw) else ""
         q = isin if isin else tick
         yahoo_url = f"https://finance.yahoo.com/quote/{tick}"
         inv_url   = (row.get("InvestingURL") or "").strip() or f"https://it.investing.com/search/?q={q}"
         mor_url   = (row.get("MorningURL")  or "").strip() or f"https://www.morningstar.com/search?query={q}"
 
-        st.markdown(f"""
-        <div class="v-card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-          <div>
-            <h3 style="margin:0">{tick} — {display_name(tick)}</h3>
-            {"<div class='v-sub'>ISIN: "+isin+"</div>" if isin else ""}
-          </div>
-          <div class="v-links">
-            <a class="v-link" href="{yahoo_url}" target="_blank" rel="noopener">
-              <img src="https://www.google.com/s2/favicons?sz=64&domain=finance.yahoo.com"><span>Yahoo</span>
-            </a>
-            <a class="v-link" href="{inv_url}" target="_blank" rel="noopener">
-              <img src="https://www.google.com/s2/favicons?sz=64&domain=it.investing.com"><span>Investing</span>
-            </a>
-            <a class="v-link" href="{mor_url}" target="_blank" rel="noopener">
-              <img src="https://www.google.com/s2/favicons?sz=64&domain=morningstar.com"><span>Morningstar</span>
-            </a>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(
+            "<div class='v-card' style='display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;'>"
+            f"<div><h3 style='margin:0'>{tick} — {display_name(tick)}</h3>"
+            f"{('<div class=\"v-sub\">ISIN: '+isin+'</div>') if isin else ''}</div>"
+            "<div class='v-links'>"
+            f"<a class='v-link' href='{yahoo_url}' target='_blank' rel='noopener'>"
+            "<img src='https://www.google.com/s2/favicons?sz=64&domain=finance.yahoo.com'><span>Yahoo</span></a>"
+            f"<a class='v-link' href='{inv_url}' target='_blank' rel='noopener'>"
+            "<img src='https://www.google.com/s2/favicons?sz=64&domain=it.investing.com'><span>Investing</span></a>"
+            f"<a class='v-link' href='{mor_url}' target='_blank' rel='noopener'>"
+            "<img src='https://www.google.com/s2/favicons?sz=64&domain=morningstar.com'><span>Morningstar</span></a>"
+            "</div></div>",
+            unsafe_allow_html=True
+        )
 
-        # --- PREZZO + GRAHAM + MARGINE (nessun tasto refresh)
+        # --- PREZZO + GRAHAM + MARGINE (senza tasto refresh)
         px = auto_price(symbol)
         pc = prev_close(symbol)
         delta_pct = None if (px is None or pc in (None,0)) else ((px - pc)/pc*100)
@@ -513,7 +523,7 @@ else:
     # ----- STORICO
     with tab2:
         if is_admin and st.button("🧹 Normalizza intestazioni 'Storico' (A1:I1)"):
-            normalize_history_headers_strict()
+            ws_hist.update("A1:I1", [DESIRED_HIST_HEADER], value_input_option="USER_ENTERED")
             st.success("Header normalizzato. Ricarico…")
             st.cache_data.clear(); st.rerun()
 
