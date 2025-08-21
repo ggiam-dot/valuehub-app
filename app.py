@@ -37,7 +37,7 @@ AUTOREFRESH_MS = int(st.secrets.get("autorefresh_ms", 15000))  # 15s
 APP_SECTION = st.secrets.get("app", {})
 ADMIN_CODE  = APP_SECTION.get("admin_code") or st.secrets.get("admin_code", "")
 
-st.set_page_config(page_title="Virgil – Value Investing", page_icon="👁️", layout="wide")
+st.set_page_config(page_title="VIGIL – Value Investing", page_icon="👁️", layout="wide")
 
 # ================== THEME / CSS ==================
 if "dark" not in st.session_state:
@@ -48,12 +48,12 @@ def inject_css(dark: bool):
         bg="#0b0f16"; paper="#131a24"; text="#f3f7fb"; sub="#c6cfdb"; border="#2a3340"
         good="#0abf53"; bad="#ff4d4f"; gold="#FFD166"; accent="#66b1ff"
         chip="#1b2432"; strip="#0f1320"; df_text="#f3f7fb"; label="#e2e8f5"
-        formula_border="#1f6f46"
+        formula_border="#1f6f46"; eye="#9db4cc"
     else:
         bg="#ffffff"; paper="#ffffff"; text="#151515"; sub="#4a4a4a"; border="#222"
         good="#0a7f2e"; bad="#c62828"; gold="#C79200"; accent="#0a66ff"
         chip="#eef3ff"; strip="#f7f9fc"; df_text="#111"; label="#333"
-        formula_border="#b8e6c9"
+        formula_border="#b8e6c9"; eye="#2d4864"
 
     st.markdown(f"""
     <style>
@@ -61,12 +61,14 @@ def inject_css(dark: bool):
         --bg:{bg}; --paper:{paper}; --text:{text}; --sub:{sub}; --border:{border};
         --good:{good}; --bad:{bad}; --gold:{gold}; --accent:{accent};
         --chip:{chip}; --strip:{strip}; --dftext:{df_text}; --label:{label};
-        --formula-border:{formula_border};
+        --formula-border:{formula_border}; --eye:{eye};
       }}
       .stApp{{ background:var(--bg); color:var(--text); }}
 
       /* BRAND */
-      .brand-title{{ font-weight:900; font-size:1.9rem; letter-spacing:.5px; display:flex; gap:10px; align-items:center; }}
+      .brand-wrap{{ display:flex; align-items:flex-start; gap:12px; }}
+      .brand-eye{{ width:32px; height:32px; margin-top:2px; }}
+      .brand-title-text{{ font-weight:900; font-size:2.0rem; letter-spacing:.6px; line-height:1.1; }}
       .brand-sub{{ font-weight:700; color:var(--label); margin-top:2px; }}
       .brand-quote{{ font-style:italic; color:var(--sub); margin-top:4px; font-family: Georgia, 'Times New Roman', serif; }}
 
@@ -79,18 +81,11 @@ def inject_css(dark: bool):
       .pct-pos{{ color:var(--good); font-weight:900; }}
       .pct-neg{{ color:var(--bad);  font-weight:900; }}
 
-      /* link esterni (icone piccole) */
       .v-links{{ display:flex; gap:14px; align-items:center; flex-wrap:wrap; }}
       .v-link{{ display:inline-flex; gap:6px; align-items:center; font-size:14px; }}
       .v-link img{{ width:18px; height:18px; border-radius:4px; }}
 
-      /* blocchi metriche */
-      .m-label-row{{ display:flex; align-items:center; gap:6px; }}
       .m-label{{ color:var(--label); font-weight:800; font-size:14px; }}
-      .ghost-btn>button{{ background:transparent !important; border:none !important;
-                          box-shadow:none !important; color:var(--label) !important;
-                          width:auto !important; height:auto !important; padding:0 4px !important;
-                          font-weight:900 !important; font-size:16px !important; }}
       .m-row{{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }}
       .m-value{{ color:var(--text); font-weight:900; font-size:34px; line-height:1.1; }}
       .delta-chip{{ padding:2px 8px; border-radius:999px; border:1px solid; font-weight:800; font-size:12px; }}
@@ -104,7 +99,6 @@ def inject_css(dark: bool):
       .judge-lbl.good{{ color:var(--good); }} .judge-lbl.bad{{ color:var(--bad); }}
       .judge-lbl .gstar{{ color:#C79200; margin-left:6px; }}
 
-      /* formula: sfondo TRASPARENTE, solo bordo */
       .formula-box{{ border:1px dashed var(--formula-border); background:transparent;
                      border-radius:12px; padding:12px 14px; }}
       .formula-code{{ font-family: ui-monospace, Menlo, Consolas, monospace; font-size:17px; font-weight:800; }}
@@ -118,13 +112,27 @@ def inject_css(dark: bool):
     </style>
     """, unsafe_allow_html=True)
 
-# HEADER (brand + dark toggle + admin gate in sidebar)
+# ====== HEADER ======
 col_left, col_right = st.columns([6,1], vertical_alignment="center")
 with col_left:
+    # Occhio stilizzato (SVG inline simile a quello allegato)
+    eye_svg = """
+    <svg class="brand-eye" viewBox="0 0 64 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path fill="var(--eye)" d="M32 0C18 0 7.1 7.7 2 16c5.1 8.3 16 16 30 16s24.9-7.7 30-16C56.9 7.7 46 0 32 0zm0 26a10 10 0 110-20 10 10 0 010 20z"/>
+      <circle cx="32" cy="16" r="6" fill="var(--bg)"/>
+    </svg>
+    """
     st.markdown(
-        "<div class='brand-title'>👁️ Virgil</div>"
-        "<div class='brand-sub'>Value Investing – Graham (Intelligent) Lookup</div>"
-        "<div class='brand-quote'>&ldquo;Price is what you pay. Value is what you get.&rdquo; — W.B.</div>",
+        f"""
+        <div class='brand-wrap'>
+          {eye_svg}
+          <div>
+            <div class='brand-title-text'>VIGIL</div>
+            <div class='brand-sub'>Value Investing – Graham (Intelligent) Lookup</div>
+            <div class='brand-quote'>&ldquo;Price is what you pay. Value is what you get.&rdquo; — W.B.</div>
+          </div>
+        </div>
+        """,
         unsafe_allow_html=True
     )
 with col_right:
@@ -132,21 +140,26 @@ with col_right:
 
 inject_css(st.session_state.dark)
 
-# Sidebar → attivazione Admin con codice
+# ====== ADMIN (sidebar) ======
 with st.sidebar:
-    st.markdown("### 🔐 Amministrazione")
-    code = st.text_input("Admin code", type="password", help="Inserisci il codice per abilitare i comandi admin")
-    is_admin = bool(ADMIN_CODE) and (code == ADMIN_CODE)
-    if is_admin:
-        st.success("Admin attivo")
+    if ADMIN_CODE:
+        st.markdown("### 🔐 Amministrazione")
+        code = st.text_input("Admin code", type="password", help="Inserisci il codice per sbloccare i comandi admin")
+        is_admin = (code == ADMIN_CODE)
+        st.success("Admin attivo") if is_admin else st.info("Modalità pubblica")
     else:
-        st.info("Modalità pubblica")
+        is_admin = False
 
 # ================== TIME / AUTH ==================
 ROME = ZoneInfo("Europe/Rome")
 def market_open(now=None):
     now = now or datetime.now(ROME)
     return now.weekday() < 5 and dtime(9,0) <= now.time() <= dtime(17,35)
+
+def should_autorefresh(now=None):
+    """Attivo solo giorni feriali 08:59–17:35 (Rome)."""
+    now = now or datetime.now(ROME)
+    return (now.weekday() < 5) and (dtime(8,59) <= now.time() <= dtime(17,35))
 
 @st.cache_resource
 def gsheet():
@@ -372,11 +385,15 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+# Auto-refresh solo in orario di mercato (08:59–17:35)
+if should_autorefresh():
+    st_autorefresh(interval=AUTOREFRESH_MS, key="auto-refresh")
+else:
+    st.info("⏸️ Auto-refresh sospeso (mercato chiuso).")
+
 if df.empty:
     st.warning("Nessun dato utile. Controlla il foglio.")
 else:
-    st_autorefresh(interval=AUTOREFRESH_MS, key="auto-refresh")  # auto-refresh 15s
-
     @st.cache_data(show_spinner=False, ttl=86400)
     def display_name(t: str) -> str:
         r = df[df["Ticker"]==t]
@@ -428,19 +445,14 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-        # --- PREZZO + GRAHAM + MARGINE
+        # --- PREZZO + GRAHAM + MARGINE (nessun tasto refresh)
         px = auto_price(symbol)
         pc = prev_close(symbol)
         delta_pct = None if (px is None or pc in (None,0)) else ((px - pc)/pc*100)
 
         col_price, col_gn, col_judge = st.columns([1.8, 1.1, 1.2], vertical_alignment="center")
         with col_price:
-            # etichetta "Prezzo" + mini refresh (solo simbolo) accanto ALLA PAROLA
-            st.markdown("<div class='m-label-row'><div class='m-label'>Prezzo</div>", unsafe_allow_html=True)
-            st.markdown("<div class='ghost-btn'>", unsafe_allow_html=True)
-            if st.button("⟳", key="mini_refresh", help="Aggiorna ora"):
-                st.cache_data.clear(); st.rerun()
-            st.markdown("</div></div>", unsafe_allow_html=True)
+            st.markdown("<div class='m-label'>Prezzo</div>", unsafe_allow_html=True)
             st.markdown(
                 f"<div class='m-row'><div class='m-value'>€ {fmt_it(px,3) if px is not None else 'n/d'}</div>"
                 + (f"<span class='delta-chip {'pos' if delta_pct and delta_pct>=0 else 'neg'}'>{delta_pct:+.2f}%</span>" if delta_pct is not None else "")
@@ -465,7 +477,7 @@ else:
                     f"</div>", unsafe_allow_html=True
                 )
 
-        # --- Formula (trasparente)
+        # --- Formula
         st.markdown("<div style='margin-top:8px;font-weight:800;color:var(--good)'>The GN Formula (Applied)</div>", unsafe_allow_html=True)
         if gn_applied is not None:
             st.markdown(
@@ -478,7 +490,7 @@ else:
 
         st.markdown("---")
 
-        # --- Comandi amministratore (visibili solo se is_admin)
+        # --- Comandi amministratore (solo se is_admin)
         if is_admin:
             c1,c2,c3,c4 = st.columns(4)
             if c1.button("Aggiorna dal foglio", use_container_width=True):
@@ -504,7 +516,6 @@ else:
 
     # ----- STORICO
     with tab2:
-        # il pulsante "Normalizza intestazioni" solo per admin
         if is_admin and st.button("🧹 Normalizza intestazioni 'Storico' (A1:I1)"):
             normalize_history_headers_strict()
             st.success("Header normalizzato. Ricarico…")
