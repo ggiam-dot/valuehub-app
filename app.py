@@ -5,7 +5,7 @@ import yfinance as yf
 from math import sqrt, isfinite
 from datetime import datetime, date, time as dtime
 from zoneinfo import ZoneInfo
-import json, re, time
+import json, re
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -13,11 +13,13 @@ from google.oauth2.service_account import Credentials
 # opzionale: autorefresh se disponibile
 try:
     from streamlit_autorefresh import st_autorefresh
-    def do_autorefresh(ms): 
-        try: st_autorefresh(interval=ms, key="auto-refresh")
-        except: pass
+    def do_autorefresh(ms):
+        try:
+            st_autorefresh(interval=ms, key="auto-refresh")
+        except Exception:
+            pass
 except Exception:
-    def do_autorefresh(ms): 
+    def do_autorefresh(ms):  # fallback no-op
         pass
 
 # ================== CONFIG ==================
@@ -111,7 +113,7 @@ def inject_css(dark: bool):
 .judge-lbl.good{{ color:var(--good); }} .judge-lbl.bad{{ color:var(--bad); }}
 .judge-lbl .gstar{{ color:#C79200; margin-left:6px; }}
 
-/* formula: trasparente (no overlay bianco) */
+/* formula */
 .formula-box{{ border:1px dashed var(--formula-border); background:transparent;
                border-radius:12px; padding:12px 14px; }}
 .formula-code{{ font-family: ui-monospace, Menlo, Consolas, monospace; font-size:17px; font-weight:800; }}
@@ -234,7 +236,8 @@ def price_live(symbol: str):
         if not h.empty: return float(h["Close"].dropna().iloc[-1])
         h = t.history(period="1d")
         if not h.empty: return float(h["Close"].dropna().iloc[-1])
-    except: pass
+    except Exception:
+        pass
     return None
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -242,7 +245,8 @@ def last_close(symbol: str):
     try:
         h = yf.Ticker(symbol).history(period="10d", interval="1d")["Close"].dropna()
         if len(h)>0: return float(h.iloc[-1])
-    except: pass
+    except Exception:
+        pass
     return None
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -254,7 +258,8 @@ def prev_close(symbol: str):
         if pc: return float(pc)
         h = t.history(period="10d", interval="1d")["Close"].dropna()
         if len(h)>=2: return float(h.iloc[-2])
-    except: pass
+    except Exception:
+        pass
     return None
 
 def auto_price(symbol: str):
@@ -268,7 +273,8 @@ def mib_summary():
             h = yf.Ticker(sym).history(period="10d", interval="1d")["Close"].dropna()
             if len(h)>=1 and last_c is None: last_c = float(h.iloc[-1])
             if len(h)>=2 and prev_c is None: prev_c = float(h.iloc[-2])
-        except: pass
+        except Exception:
+            pass
     for sym in MIB_SYMBOLS:
         try:
             t = yf.Ticker(sym)
@@ -277,7 +283,8 @@ def mib_summary():
                 live = float(fi.get("last_price")); break
             intr = t.history(period="1d", interval="1m")["Close"].dropna()
             if len(intr)>0: live = float(intr.iloc[-1]); break
-        except: pass
+        except Exception:
+            pass
     return {"live": live, "last_close": last_c, "prev_close": prev_c}
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -285,7 +292,8 @@ def company_name(symbol: str) -> str:
     try:
         info = yf.Ticker(symbol).info
         return str(info.get("shortName") or info.get("longName") or "")
-    except: return ""
+    except Exception:
+        return ""
 
 def gn_225(eps,bvps):
     if eps and bvps and eps>0 and bvps>0: return sqrt(22.5*eps*bvps)
@@ -407,7 +415,8 @@ else:
         try:
             info = yf.Ticker(normalize_symbol(t)).info
             return str(info.get("shortName") or info.get("longName") or "")
-        except: return ""
+        except Exception:
+            return ""
 
     tickers_all = sorted(df["Ticker"].tolist())
     labels = []
@@ -436,10 +445,11 @@ else:
         inv_url   = (row.get("InvestingURL") or "").strip() or f"https://it.investing.com/search/?q={q}"
         mor_url   = (row.get("MorningURL")  or "").strip() or f"https://www.morningstar.com/search?query={q}"
 
-        st.markdown(
+        # ---- COSTRUZIONE HTML HEADER (fix: niente backslash in f-string) ----
+        isin_html = f"<div class='v-sub'>ISIN: {isin}</div>" if isin else ""
+        header_html = (
             "<div class='v-card' style='display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;'>"
-            f"<div><h3 style='margin:0'>{tick} — {display_name(tick)}</h3>"
-            f"{('<div class=\"v-sub\">ISIN: '+isin+'</div>') if isin else ''}</div>"
+            f"<div><h3 style='margin:0'>{tick} — {display_name(tick)}</h3>{isin_html}</div>"
             "<div class='v-links'>"
             f"<a class='v-link' href='{yahoo_url}' target='_blank' rel='noopener'>"
             "<img src='https://www.google.com/s2/favicons?sz=64&domain=finance.yahoo.com'><span>Yahoo</span></a>"
@@ -447,11 +457,11 @@ else:
             "<img src='https://www.google.com/s2/favicons?sz=64&domain=it.investing.com'><span>Investing</span></a>"
             f"<a class='v-link' href='{mor_url}' target='_blank' rel='noopener'>"
             "<img src='https://www.google.com/s2/favicons?sz=64&domain=morningstar.com'><span>Morningstar</span></a>"
-            "</div></div>",
-            unsafe_allow_html=True
+            "</div></div>"
         )
+        st.markdown(header_html, unsafe_allow_html=True)
 
-        # --- PREZZO + GRAHAM + MARGINE (senza tasto refresh)
+        # --- PREZZO + GRAHAM + MARGINE
         px = auto_price(symbol)
         pc = prev_close(symbol)
         delta_pct = None if (px is None or pc in (None,0)) else ((px - pc)/pc*100)
@@ -530,7 +540,7 @@ else:
         dfh = load_history_df()
         if not dfh.empty:
             try: current_tick = label_to_ticker[selected_label]
-            except: current_tick = None
+            except Exception: current_tick = None
             dft = dfh[dfh["Ticker"].astype(str).str.upper()==(current_tick or "").upper()] if current_tick else dfh
             dft = dft.sort_values("Timestamp")
 
