@@ -116,32 +116,29 @@ def inject_css(dark: bool):
 col_left, col_right = st.columns([6,1], vertical_alignment="center")
 
 with col_left:
-    # Occhio stilizzato
-    eye_svg = """
-    <svg class="brand-eye" viewBox="0 0 64 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <path fill="var(--eye)" d="M32 0C18 0 7.1 7.7 2 16c5.1 8.3 16 16 30 16s24.9-7.7 30-16C56.9 7.7 46 0 32 0zm0 26a10 10 0 110-20 10 10 0 010 20z"/>
-      <circle cx="32" cy="16" r="6" fill="var(--bg)"/>
-    </svg>
-    """
-    # ⚠️ usa SEMPRE st.markdown(..., unsafe_allow_html=True)
-    st.markdown(
-        f"""
-        <div class='brand-wrap'>
-          {eye_svg}
-          <div>
-            <div class='brand-title-text'>VIRGIL</div>
-            <div class='brand-sub'>Value Investing – Graham (Intelligent) Lookup</div>
-            <div class='brand-quote'>&ldquo;Price is what you pay. Value is what you get.&rdquo; — W.B.</div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True
+    # Occhio stilizzato (SVG)
+    eye_svg = (
+        "<svg class='brand-eye' viewBox='0 0 64 32' xmlns='http://www.w3.org/2000/svg' aria-hidden='true'>"
+        "<path fill='var(--eye)' d='M32 0C18 0 7.1 7.7 2 16c5.1 8.3 16 16 30 16s24.9-7.7 30-16C56.9 7.7 46 0 32 0zm0 26a10 10 0 110-20 10 10 0 010 20z'/>"
+        "<circle cx='32' cy='16' r='6' fill='var(--bg)'/></svg>"
     )
+
+    brand_html = (
+        "<div class='brand-wrap'>"
+          f"{eye_svg}"
+          "<div>"
+            "<div class='brand-title-text'>VIGIL</div>"
+            "<div class='brand-sub'>Value Investing – Graham (Intelligent) Lookup</div>"
+            "<div class='brand-quote'>&ldquo;Price is what you pay. Value is what you get.&rdquo; — W.B.</div>"
+          "</div>"
+        "</div>"
+    )
+
+    st.markdown(brand_html, unsafe_allow_html=True)
 
 with col_right:
     st.session_state.dark = st.toggle("Dark", value=st.session_state.dark, help="Tema scuro/chiaro")
 
-inject_css(st.session_state.dark)
 
 
 # ====== ADMIN (sidebar) ======
